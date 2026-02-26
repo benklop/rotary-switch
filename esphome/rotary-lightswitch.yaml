@@ -1,0 +1,144 @@
+# Rotary Light Switch - ESPHome configuration for ESP32-S2 Mini (Lolin S2 Mini)
+# EC11 rotary encoder (CLK, DT, SW) + push button + RGB LED behind knob
+# Board: lolin_s2_mini. Upload: hold GPIO0, press RST to enter flash mode.
+# Wiring: CLK=GPIO34, DT=GPIO36, SW=GPIO37; RGB R=GPIO4, G=GPIO5, B=GPIO6 (220 Ω between each GPIO and anode); cathode to GND; 3V3, GND
+
+substitutions:
+  name: rotary-lightswitch
+  friendly_name: Rotary Light Switch
+
+esp32:
+  board: lolin_s2_mini
+  framework:
+    type: arduino
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+logger:
+
+# RGB LED behind knob (feedback / night light); 220 Ω current-limiting resistor per channel on R, G, B pins
+output:
+  - platform: ledc
+    pin: GPIO4
+    id: led_red
+    channel: 0
+  - platform: ledc
+    pin: GPIO5
+    id: led_green
+    channel: 1
+  - platform: ledc
+    pin: GPIO6
+    id: led_blue
+    channel: 2
+
+light:
+  - platform: rgb
+    name: "${friendly_name} Knob LED"
+    id: knob_led
+    red: led_red
+    green: led_green
+    blue: led_blue
+    restore_mode: ALWAYS_OFF
+
+# EC11 rotary encoder: CLK=pin_a, DT=pin_b, internal pull-up
+sensor:
+  - platform: rotary_encoder
+    id: encoder
+    name: "${friendly_name} Encoder"
+    pin_a: GPIO34
+    pin_b: GPIO36
+    resolution: 2
+    min_value: -32768
+    max_value: 32767
+    restore_mode: RESTORE_DEFAULT_ZERO
+    publish_initial_value: false
+    on_clockwise:
+      - text_sensor.template.publish:
+          id: encoder_direction_sensor
+          state: "clockwise"
+      - delay: 50ms
+      - text_sensor.template.publish:
+          id: encoder_direction_sensor
+          state: "idle"
+    on_anticlockwise:
+      - text_sensor.template.publish:
+          id: encoder_direction_sensor
+          state: "anticlockwise"
+      - delay: 50ms
+      - text_sensor.template.publish:
+          id: encoder_direction_sensor
+          state: "idle"
+
+# Template text sensors for HA blueprint triggers (state set by automations below)
+text_sensor:
+  - platform: template
+    id: encoder_direction_sensor
+    name: "${friendly_name} Encoder Direction"
+    lambda: "return {\"idle\"};"
+    update_interval: 10s
+  - platform: template
+    id: button_action_sensor
+    name: "${friendly_name} Button Action"
+    lambda: "return {\"idle\"};"
+    update_interval: 10s
+
+# Encoder built-in push button (SW)
+binary_sensor:
+  - platform: gpio
+    id: encoder_button
+    name: "${friendly_name} Button"
+    pin:
+      number: GPIO37
+      mode: input_pullup
+      inverted: true
+    on_multi_click:
+      # Order matters: long first, then double, then single
+      - timing:
+          - ON for at least 0.5s
+        then:
+          - text_sensor.template.publish:
+              id: button_action_sensor
+              state: "long"
+          - delay: 200ms
+          - text_sensor.template.publish:
+              id: button_action_sensor
+              state: "idle"
+      - timing:
+          - ON for at most 0.5s
+          - OFF for at most 0.4s
+          - ON for at most 0.5s
+          - OFF for at least 0.2s
+        then:
+          - text_sensor.template.publish:
+              id: button_action_sensor
+              state: "double"
+          - delay: 200ms
+          - text_sensor.template.publish:
+              id: button_action_sensor
+              state: "idle"
+      - timing:
+          - ON for at most 0.5s
+          - OFF for at least 0.4s
+        then:
+          - text_sensor.template.publish:
+              id: button_action_sensor
+              state: "single"
+          - delay: 200ms
+          - text_sensor.template.publish:
+              id: button_action_sensor
+              state: "idle"

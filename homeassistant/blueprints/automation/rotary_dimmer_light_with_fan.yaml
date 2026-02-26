@@ -1,0 +1,420 @@
+# Alternate blueprint: double-press = fan speed mode (instead of hue).
+# Fan speed: 4 detents per step (off / low / medium / high). Feedback light: red → yellow → green.
+blueprint:
+  name: Rotary Encoder Dimmer Light (with Fan Mode)
+  description: Control a dimmable light + fan with rotary encoder. Single=toggle, rotate=dim, double=fan mode (4 detents per speed), long=color temp. Feedback light shows red/yellow/green for fan speed.
+  domain: automation
+  input:
+    light_entity:
+      name: Light
+      description: Light to control (toggle and dim)
+      selector:
+        entity:
+          domain: light
+    fan_entity:
+      name: Fan
+      description: Fan to control in fan mode (percentage 0 / 33 / 66 / 100)
+      selector:
+        entity:
+          domain: fan
+    feedback_light_entity:
+      name: Feedback light
+      description: Light used for fan speed feedback (e.g. knob LED) – red=off, yellow=middle, green=max
+      selector:
+        entity:
+          domain: light
+    encoder_direction_entity:
+      name: Encoder direction sensor
+      description: Text sensor that reports clockwise / anticlockwise / idle (from ESPHome rotary-lightswitch)
+      selector:
+        entity:
+          domain: text_sensor
+    button_action_entity:
+      name: Button action sensor
+      description: Text sensor that reports single / double / long / idle (from ESPHome rotary-lightswitch)
+      selector:
+        entity:
+          domain: text_sensor
+    mode_select_entity:
+      name: Mode helper
+      description: input_select with options normal, fan, color_temp (create one and select it here)
+      selector:
+        entity:
+          domain: input_select
+    detent_counter_entity:
+      name: Fan detent counter
+      description: input_number 0–15 for fan detent position (create one, min=0, max=15, step=1)
+      selector:
+        entity:
+          domain: input_number
+    exit_timer_entity:
+      name: Exit timer
+      description: Timer entity (e.g. 30s) used to leave fan/CT mode (create a timer and select it here)
+      selector:
+        entity:
+          domain: timer
+    brightness_step:
+      name: Brightness step
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 25
+          step: 1
+          unit_of_measurement: "%"
+    mired_step:
+      name: Color temperature step (mireds)
+      default: 10
+      selector:
+        number:
+          min: 5
+          max: 50
+          step: 5
+    timeout_seconds:
+      name: Fan/CT mode timeout (seconds)
+      default: 30
+      selector:
+        number:
+          min: 10
+          max: 120
+          step: 5
+          unit_of_measurement: s
+
+trigger:
+  - platform: state
+    entity_id:
+      - !input button_action_entity
+      - !input encoder_direction_entity
+    id: button_or_encoder
+  - platform: state
+    entity_id: !input exit_timer_entity
+    from: "active"
+    to: "idle"
+    id: timer_finished
+
+action:
+  - choose:
+      # Timer finished: return to normal mode
+      - conditions:
+          - condition: trigger
+            id: timer_finished
+        sequence:
+          - service: input_select.select_option
+            target:
+              entity_id: !input mode_select_entity
+            data:
+              option: "normal"
+
+      # Single press: toggle light
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'single' }}"
+        sequence:
+          - service: light.toggle
+            target:
+              entity_id: !input light_entity
+
+      # Double press: enter fan mode or exit if already in fan mode
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'double' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'fan' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "normal"
+                  - service: timer.cancel
+                    target:
+                      entity_id: !input exit_timer_entity
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) != 'fan' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "fan"
+                  - service: timer.start
+                    target:
+                      entity_id: !input exit_timer_entity
+                    data:
+                      duration: !input timeout_seconds
+                  # Show current fan speed on feedback light when entering fan mode
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (states(input.detent_counter_entity) | int(0) / 4) | int == 0 }}"
+                        sequence:
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 0, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (states(input.detent_counter_entity) | int(0) / 4) | int == 3 }}"
+                        sequence:
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [0, 255, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (states(input.detent_counter_entity) | int(0) / 4) | int in [1, 2] }}"
+                        sequence:
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 255, 0]
+
+      # Long press: enter color_temp mode or exit if already in CT
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'long' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "normal"
+                  - service: timer.cancel
+                    target:
+                      entity_id: !input exit_timer_entity
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) != 'color_temp' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "color_temp"
+                  - service: timer.start
+                    target:
+                      entity_id: !input exit_timer_entity
+                    data:
+                      duration: !input timeout_seconds
+
+      # Encoder clockwise
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'clockwise' }}"
+        sequence:
+          - choose:
+              # Normal mode: increase brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'normal' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      brightness_pct: "{{ [0, [(state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) + input.brightness_step, 100] | min] | max }}"
+              # Fan mode: 4 detents per speed step (0–15 counter → levels 0–3)
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'fan' }}"
+                sequence:
+                  - variables:
+                      new_counter: "{{ [0, [states(input.detent_counter_entity) | int(0) + 1, 15] | min] | max }}"
+                      level: "{{ (new_counter | int / 4) | int }}"
+                  - service: input_number.set_value
+                    target:
+                      entity_id: !input detent_counter_entity
+                    data:
+                      value: "{{ new_counter }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 0 }}"
+                        sequence:
+                          - service: fan.turn_off
+                            target:
+                              entity_id: !input fan_entity
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 0, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 1 }}"
+                        sequence:
+                          - service: fan.turn_on
+                            target:
+                              entity_id: !input fan_entity
+                            data:
+                              percentage: 33
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 255, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 2 }}"
+                        sequence:
+                          - service: fan.turn_on
+                            target:
+                              entity_id: !input fan_entity
+                            data:
+                              percentage: 66
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 255, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 3 }}"
+                        sequence:
+                          - service: fan.turn_on
+                            target:
+                              entity_id: !input fan_entity
+                            data:
+                              percentage: 100
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [0, 255, 0]
+              # Color temp mode: warmer (lower mired) when clockwise
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      color_temp: "{{ [state_attr(input.light_entity, 'min_mireds') | default(153), [state_attr(input.light_entity, 'max_mireds') | default(500), state_attr(input.light_entity, 'color_temp') | default(250) | int - input.mired_step] | min] | max }}"
+
+      # Encoder anticlockwise
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'anticlockwise' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'normal' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      brightness_pct: "{{ [0, [(state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) - input.brightness_step, 100] | min] | max }}"
+              # Fan mode: decrease detent counter, update fan and feedback
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'fan' }}"
+                sequence:
+                  - variables:
+                      new_counter: "{{ [0, states(input.detent_counter_entity) | int(0) - 1] | max }}"
+                      level: "{{ (new_counter | int / 4) | int }}"
+                  - service: input_number.set_value
+                    target:
+                      entity_id: !input detent_counter_entity
+                    data:
+                      value: "{{ new_counter }}"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 0 }}"
+                        sequence:
+                          - service: fan.turn_off
+                            target:
+                              entity_id: !input fan_entity
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 0, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 1 }}"
+                        sequence:
+                          - service: fan.turn_on
+                            target:
+                              entity_id: !input fan_entity
+                            data:
+                              percentage: 33
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 255, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 2 }}"
+                        sequence:
+                          - service: fan.turn_on
+                            target:
+                              entity_id: !input fan_entity
+                            data:
+                              percentage: 66
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [255, 255, 0]
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ level == 3 }}"
+                        sequence:
+                          - service: fan.turn_on
+                            target:
+                              entity_id: !input fan_entity
+                            data:
+                              percentage: 100
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              rgb_color: [0, 255, 0]
+
+              # Color temp mode: cooler (higher mired) when anticlockwise
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      color_temp: "{{ [state_attr(input.light_entity, 'min_mireds') | default(153), [state_attr(input.light_entity, 'max_mireds') | default(500), state_attr(input.light_entity, 'color_temp') | default(250) | int + input.mired_step] | min] | max }}"

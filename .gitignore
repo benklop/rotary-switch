@@ -1,0 +1,11 @@
+# ESPHome secrets (copy from secrets.yaml.example)
+esphome/secrets.yaml
+
+# OpenSCAD export
+*.stl
+*.3mf
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo

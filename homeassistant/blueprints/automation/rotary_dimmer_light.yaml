@@ -1,0 +1,260 @@
+blueprint:
+  name: Rotary Encoder Dimmer Light
+  description: Control a dimmable/color light with an ESPHome rotary encoder (single=toggle, rotate=brightness, double=hue mode, long=color temp mode). Requires an input_select for mode and a timer for 30s exit.
+  domain: automation
+  input:
+    light_entity:
+      name: Light
+      description: Light to control
+      selector:
+        entity:
+          domain: light
+    encoder_direction_entity:
+      name: Encoder direction sensor
+      description: Text sensor that reports clockwise / anticlockwise / idle (from ESPHome rotary-lightswitch)
+      selector:
+        entity:
+          domain: text_sensor
+    button_action_entity:
+      name: Button action sensor
+      description: Text sensor that reports single / double / long / idle (from ESPHome rotary-lightswitch)
+      selector:
+        entity:
+          domain: text_sensor
+    mode_select_entity:
+      name: Mode helper
+      description: input_select with options normal, hue, color_temp (create one and select it here)
+      selector:
+        entity:
+          domain: input_select
+    exit_timer_entity:
+      name: Exit timer
+      description: Timer entity (e.g. 30s) used to leave hue/CT mode (create a timer and select it here)
+      selector:
+        entity:
+          domain: timer
+    brightness_step:
+      name: Brightness step
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 25
+          step: 1
+          unit_of_measurement: "%"
+    hue_step:
+      name: Hue step
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+    mired_step:
+      name: Color temperature step (mireds)
+      default: 10
+      selector:
+        number:
+          min: 5
+          max: 50
+          step: 5
+    timeout_seconds:
+      name: Hue/CT mode timeout (seconds)
+      default: 30
+      selector:
+        number:
+          min: 10
+          max: 120
+          step: 5
+          unit_of_measurement: s
+
+trigger:
+  - platform: state
+    entity_id:
+      - !input button_action_entity
+      - !input encoder_direction_entity
+    id: button_or_encoder
+  - platform: state
+    entity_id: !input exit_timer_entity
+    from: "active"
+    to: "idle"
+    id: timer_finished
+
+action:
+  - choose:
+      # Timer finished: return to normal mode
+      - conditions:
+          - condition: trigger
+            id: timer_finished
+        sequence:
+          - service: input_select.select_option
+            target:
+              entity_id: !input mode_select_entity
+            data:
+              option: "normal"
+
+      # Single press: toggle light
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'single' }}"
+        sequence:
+          - service: light.toggle
+            target:
+              entity_id: !input light_entity
+
+      # Double press: enter hue mode or exit if already in hue
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'double' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'hue' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "normal"
+                  - service: timer.cancel
+                    target:
+                      entity_id: !input exit_timer_entity
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) != 'hue' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "hue"
+                  - service: timer.start
+                    target:
+                      entity_id: !input exit_timer_entity
+                    data:
+                      duration: !input timeout_seconds
+
+      # Long press: enter color_temp mode or exit if already in CT
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'long' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "normal"
+                  - service: timer.cancel
+                    target:
+                      entity_id: !input exit_timer_entity
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) != 'color_temp' }}"
+                sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input mode_select_entity
+                    data:
+                      option: "color_temp"
+                  - service: timer.start
+                    target:
+                      entity_id: !input exit_timer_entity
+                    data:
+                      duration: !input timeout_seconds
+
+      # Encoder clockwise
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'clockwise' }}"
+        sequence:
+          - choose:
+              # Normal mode: increase brightness
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'normal' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      brightness_pct: "{{ [0, [(state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) + input.brightness_step, 100] | min] | max }}"
+              # Hue mode: increase hue
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'hue' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      hs_color: "{{ [(state_attr(input.light_entity, 'hs_color')[0] | default(0) + input.hue_step) % 360, state_attr(input.light_entity, 'hs_color')[1] | default(100)] }}"
+              # Color temp mode: warmer (lower mired)
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      color_temp: "{{ [state_attr(input.light_entity, 'min_mireds') | default(153), [state_attr(input.light_entity, 'max_mireds') | default(500), state_attr(input.light_entity, 'color_temp') | default(250) | int - input.mired_step] | min] | max }}"
+
+      # Encoder anticlockwise
+      - conditions:
+          - condition: and
+            conditions:
+              - condition: trigger
+                id: button_or_encoder
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'anticlockwise' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'normal' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      brightness_pct: "{{ [0, [(state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) - input.brightness_step, 100] | min] | max }}"
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'hue' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      hs_color: "{{ [(state_attr(input.light_entity, 'hs_color')[0] | default(0) - input.hue_step + 360) % 360, state_attr(input.light_entity, 'hs_color')[1] | default(100)] }}"
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                sequence:
+                  - service: light.turn_on
+                    target:
+                      entity_id: !input light_entity
+                    data:
+                      color_temp: "{{ [state_attr(input.light_entity, 'min_mireds') | default(153), [state_attr(input.light_entity, 'max_mireds') | default(500), state_attr(input.light_entity, 'color_temp') | default(250) | int + input.mired_step] | min] | max }}"
