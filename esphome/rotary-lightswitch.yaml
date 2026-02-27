@@ -69,125 +69,32 @@ sensor:
     pin_b:
       number: GPIO36
       mode: input_pullup
-    resolution: 4
+    # 1 "step" per detent; tweak if your hardware is different
+    resolution: 1
     min_value: -32768
     max_value: 32767
     restore_mode: RESTORE_DEFAULT_ZERO
     publish_initial_value: false
-    on_value:
-      then:
-        - lambda: |-
-            static int32_t last = 0;
-            static uint32_t last_ts = 0;
-            const int32_t counts_per_rev = 80;  // 20 detents * 4 transitions per detent
-            uint32_t now = millis();
-            int32_t current = (int32_t) x;
-            if (last_ts == 0) {
-              last_ts = now;
-              last = current;
-              return;
-            }
-            int32_t delta_counts = current - last;
-            if (delta_counts == 0) {
-              return;
-            }
-            uint32_t dt = now - last_ts;
-            if (dt == 0) {
-              return;
-            }
-            const float resolution = 4.0f;
-            float delta_detents = delta_counts / resolution;
-            float speed = delta_detents * 1000.0f / (float) dt;
-            id(encoder_speed).publish_state(speed);
-            // Delta in degrees for this movement (signed)
-            float delta_degrees = (float) delta_counts * 360.0f / (float) counts_per_rev;
-            id(encoder_delta_degrees).publish_state(delta_degrees);
-            // Absolute angle within one revolution [0, 360)
-            int32_t mod_counts = current % counts_per_rev;
-            if (mod_counts < 0) {
-              mod_counts += counts_per_rev;
-            }
-            float angle_degrees = (float) mod_counts * 360.0f / (float) counts_per_rev;
-            id(encoder_angle_degrees).publish_state(angle_degrees);
-            // Signed RPM based on this movement
-            float rev_per_sec = ((float) delta_counts / (float) counts_per_rev) * 1000.0f / (float) dt;
-            float rpm = rev_per_sec * 60.0f;
-            id(encoder_rpm).publish_state(rpm);
-            last = current;
-            last_ts = now;
-        - script.execute: encoder_speed_idle_timer
+
+    # Each detent step clockwise → one short "press" of encoder_cw
     on_clockwise:
-      - text_sensor.template.publish:
-          id: encoder_direction_sensor
-          state: "clockwise"
-      - delay: 10ms
-      - text_sensor.template.publish:
-          id: encoder_direction_sensor
-          state: "idle"
+      - binary_sensor.template.publish:
+          id: encoder_cw
+          state: true
+      - delay: 5ms
+      - binary_sensor.template.publish:
+          id: encoder_cw
+          state: false
+
+    # Each detent step counterclockwise → one short "press" of encoder_ccw
     on_anticlockwise:
-      - text_sensor.template.publish:
-          id: encoder_direction_sensor
-          state: "anticlockwise"
-      - delay: 10ms
-      - text_sensor.template.publish:
-          id: encoder_direction_sensor
-          state: "idle"
-
-  - platform: template
-    id: encoder_speed
-    name: "Encoder Speed"
-    unit_of_measurement: "detents/s"
-    accuracy_decimals: 1
-    update_interval: never
-
-  - platform: template
-    id: encoder_rpm
-    name: "Encoder RPM"
-    unit_of_measurement: "rpm"
-    accuracy_decimals: 2
-    update_interval: never
-
-  - platform: template
-    id: encoder_angle_degrees
-    name: "Encoder Angle"
-    unit_of_measurement: "°"
-    accuracy_decimals: 1
-    update_interval: never
-
-  - platform: template
-    id: encoder_delta_degrees
-    name: "Encoder Delta Degrees"
-    unit_of_measurement: "°"
-    accuracy_decimals: 1
-    update_interval: never
-
-script:
-  - id: encoder_speed_idle_timer
-    mode: restart
-    then:
-      - delay: 50ms
-      - sensor.template.publish:
-          id: encoder_speed
-          state: 0.0
-      - sensor.template.publish:
-          id: encoder_rpm
-          state: 0.0
-      - sensor.template.publish:
-          id: encoder_delta_degrees
-          state: 0.0
-
-# Template text sensors for HA blueprint triggers (state set by automations below)
-text_sensor:
-  - platform: template
-    id: encoder_direction_sensor
-    name: "Encoder Direction"
-    lambda: "return {\"idle\"};"
-    update_interval: never
-  - platform: template
-    id: button_action_sensor
-    name: "Button Action"
-    lambda: "return {\"idle\"};"
-    update_interval: never
+      - binary_sensor.template.publish:
+          id: encoder_ccw
+          state: true
+      - delay: 5ms
+      - binary_sensor.template.publish:
+          id: encoder_ccw
+          state: false
 
 # Encoder built-in push button (ENC_BTN)
 binary_sensor:
@@ -206,35 +113,23 @@ binary_sensor:
           - binary_sensor.template.publish:
               id: encoder_button_long
               state: true
-          - text_sensor.template.publish:
-              id: button_action_sensor
-              state: "long"
           - delay: 200ms
           - binary_sensor.template.publish:
               id: encoder_button_long
               state: false
-          - text_sensor.template.publish:
-              id: button_action_sensor
-              state: "idle"
       - timing:
           - ON for at most 0.5s
           - OFF for at most 0.2s
-          - ON for at most 0.5s
+          - ON for at most 0. qqqqqqq5s
           - OFF for at least 0.2s
         then:
           - binary_sensor.template.publish:
               id: encoder_button_double
               state: true
-          - text_sensor.template.publish:
-              id: button_action_sensor
-              state: "double"
           - delay: 200ms
           - binary_sensor.template.publish:
               id: encoder_button_double
               state: false
-          - text_sensor.template.publish:
-              id: button_action_sensor
-              state: "idle"
       - timing:
           - ON for at most 0.5s
           - OFF for at least 0.2s
@@ -242,16 +137,10 @@ binary_sensor:
           - binary_sensor.template.publish:
               id: encoder_button_single
               state: true
-          - text_sensor.template.publish:
-              id: button_action_sensor
-              state: "single"
           - delay: 200ms
           - binary_sensor.template.publish:
               id: encoder_button_single
               state: false
-          - text_sensor.template.publish:
-              id: button_action_sensor
-              state: "idle"
 
   - platform: template
     id: encoder_button_single
@@ -264,3 +153,12 @@ binary_sensor:
   - platform: template
     id: encoder_button_long
     name: "Button Long"
+
+  # "Virtual" CW / CCW buttons – exposed to Home Assistant
+  - platform: template
+    id: encoder_cw
+    name: "Encoder CW"
+
+  - platform: template
+    id: encoder_ccw
+    name: "Encoder CCW"
