@@ -1,7 +1,13 @@
 blueprint:
-  name: Rotary Encoder Dimmer Light
-  description: Control a dimmable/color light with an ESPHome rotary encoder (single=toggle, rotate=brightness, double=hue mode, long=color temp mode). Requires an input_select for mode and a timer for 30s exit.
+  name: Rotary Encoder Simple Light (Degrees)
+  description: >
+    Simple rotary encoder dimmer using ESPHome degree-based sensor and
+    explicit single/double/long button binary sensors.
+    - Single press: toggle light
+    - Rotate: adjust brightness based on delta degrees
+    - Double/long press: optional extra actions (off by default)
   domain: automation
+
   input:
     light_entity:
       name: Light
@@ -9,38 +15,40 @@ blueprint:
       selector:
         entity:
           domain: light
-    encoder_direction_entity:
-      name: Encoder direction sensor
-      description: Sensor that reports clockwise / anticlockwise / idle (from ESPHome rotary-lightswitch)
+
+    delta_degrees_sensor:
+      name: Encoder delta degrees sensor
+      description: ESPHome sensor that reports signed delta in degrees (e.g. encoder_delta_degrees)
       selector:
         entity:
           domain: sensor
-    button_action_entity:
-      name: Button action sensor
-      description: Sensor that reports single / double / long / idle (from ESPHome rotary-lightswitch)
+
+    button_single:
+      name: Single-press button binary sensor
+      description: ESPHome binary sensor that pulses on for a single press (e.g. encoder_button_single)
       selector:
         entity:
-          domain: sensor
-    mode_select_entity:
-      name: Mode helper
-      description: input_select with options normal, hue, color_temp (create one and select it here)
+          domain: binary_sensor
+
+    button_double:
+      name: Double-press button binary sensor (optional)
+      description: ESPHome binary sensor that pulses on for a double press (e.g. encoder_button_double)
+      default: []
       selector:
         entity:
-          domain: input_select
-    exit_timer_entity:
-      name: Exit timer
-      description: Timer entity (e.g. 30s) used to leave hue/CT mode (create a timer and select it here)
+          domain: binary_sensor
+
+    button_long:
+      name: Long-press button binary sensor (optional)
+      description: ESPHome binary sensor that pulses on for a long press (e.g. encoder_button_long)
+      default: []
       selector:
         entity:
-          domain: timer
-    encoder_speed_entity:
-      name: Encoder speed sensor
-      description: Sensor reporting signed encoder speed in detents/s
-      selector:
-        entity:
-          domain: sensor
-    brightness_step:
-      name: Brightness step
+          domain: binary_sensor
+
+    brightness_per_45deg:
+      name: Brightness change per 45°
+      description: How many % brightness to change for a 45° turn.
       default: 5
       selector:
         number:
@@ -48,360 +56,102 @@ blueprint:
           max: 25
           step: 1
           unit_of_measurement: "%"
-    hue_step:
-      name: Hue step
-      default: 5
-      selector:
-        number:
-          min: 1
-          max: 30
-          step: 1
-    mired_step:
-      name: Color temperature step (mireds)
-      default: 10
-      selector:
-        number:
-          min: 5
-          max: 50
-          step: 5
-    timeout_seconds:
-      name: Hue/CT mode timeout (seconds)
-      default: 30
-      selector:
-        number:
-          min: 10
-          max: 120
-          step: 5
-          unit_of_measurement: s
-    low_speed_threshold:
-      name: Low speed threshold (detents/s)
+
+    min_delta_degrees:
+      name: Ignore tiny movements below this delta (°)
+      description: Movements smaller than this absolute delta are ignored.
       default: 1.0
       selector:
         number:
           min: 0.0
           max: 10.0
-          step: 0.1
-    high_speed_threshold:
-      name: High speed threshold (detents/s)
-      default: 4.0
-      selector:
-        number:
-          min: 0.0
-          max: 20.0
-          step: 0.1
-    medium_speed_multiplier:
-      name: Medium speed multiplier
-      default: 2.0
-      selector:
-        number:
-          min: 1.0
-          max: 10.0
-          step: 0.5
-    high_speed_multiplier:
-      name: High speed multiplier
-      default: 4.0
-      selector:
-        number:
-          min: 1.0
-          max: 20.0
           step: 0.5
 
 variables:
   light: !input light_entity
-  mode_select: !input mode_select_entity
-  encoder_speed: !input encoder_speed_entity
-  brightness_step_value: !input brightness_step
-  hue_step_value: !input hue_step
-  mired_step_value: !input mired_step
-  timeout_seconds_value: !input timeout_seconds
-  low_speed_threshold_value: !input low_speed_threshold
-  high_speed_threshold_value: !input high_speed_threshold
-  medium_speed_multiplier_value: !input medium_speed_multiplier
-  high_speed_multiplier_value: !input high_speed_multiplier
+  delta_sensor: !input delta_degrees_sensor
+  brightness_per_45deg_value: !input brightness_per_45deg
+  min_delta_degrees_value: !input min_delta_degrees
 
 trigger:
-  - platform: state
-    entity_id:
-      - !input button_action_entity
-      - !input encoder_direction_entity
-    id: button_or_encoder
-  - platform: state
-    entity_id: !input exit_timer_entity
-    from: "active"
-    to: "idle"
-    id: timer_finished
+  - id: rotation
+    platform: state
+    entity_id: !input delta_degrees_sensor
+
+  - id: button_single
+    platform: state
+    entity_id: !input button_single
+    from: "off"
+    to: "on"
+
+  - id: button_double
+    platform: state
+    entity_id: !input button_double
+    from: "off"
+    to: "on"
+    enabled: false
+
+  - id: button_long
+    platform: state
+    entity_id: !input button_long
+    from: "off"
+    to: "on"
+    enabled: false
 
 action:
   - choose:
-      # Timer finished: return to normal mode
-      - conditions:
-          - condition: trigger
-            id: timer_finished
-        sequence:
-          - service: input_select.select_option
-            target:
-              entity_id: !input mode_select_entity
-            data:
-              option: "normal"
-
       # Single press: toggle light
       - conditions:
-          - condition: and
-            conditions:
-              - condition: trigger
-                id: button_or_encoder
-              - condition: template
-                value_template: "{{ trigger.to_state.state == 'single' }}"
+          - condition: trigger
+            id: button_single
         sequence:
           - service: light.toggle
             target:
               entity_id: !input light_entity
 
-      # Double press: enter hue mode or exit if already in hue
+      # Double press (optional): turn light to full brightness
       - conditions:
-          - condition: and
-            conditions:
-              - condition: trigger
-                id: button_or_encoder
-              - condition: template
-                value_template: "{{ trigger.to_state.state == 'double' }}"
+          - condition: trigger
+            id: button_double
         sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'hue' }}"
-                sequence:
-                  - service: input_select.select_option
-                    target:
-                      entity_id: !input mode_select_entity
-                    data:
-                      option: "normal"
-                  - service: timer.cancel
-                    target:
-                      entity_id: !input exit_timer_entity
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) != 'hue' }}"
-                sequence:
-                  - service: input_select.select_option
-                    target:
-                      entity_id: !input mode_select_entity
-                    data:
-                      option: "hue"
-                  - service: timer.start
-                    target:
-                      entity_id: !input exit_timer_entity
-                    data:
-                      duration: !input timeout_seconds
+          - service: light.turn_on
+            target:
+              entity_id: !input light_entity
+            data:
+              brightness_pct: 100
 
-      # Long press: enter color_temp mode or exit if already in CT
+      # Long press (optional): turn light off
       - conditions:
-          - condition: and
-            conditions:
-              - condition: trigger
-                id: button_or_encoder
-              - condition: template
-                value_template: "{{ trigger.to_state.state == 'long' }}"
+          - condition: trigger
+            id: button_long
         sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'color_temp' }}"
-                sequence:
-                  - service: input_select.select_option
-                    target:
-                      entity_id: !input mode_select_entity
-                    data:
-                      option: "normal"
-                  - service: timer.cancel
-                    target:
-                      entity_id: !input exit_timer_entity
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) != 'color_temp' }}"
-                sequence:
-                  - service: input_select.select_option
-                    target:
-                      entity_id: !input mode_select_entity
-                    data:
-                      option: "color_temp"
-                  - service: timer.start
-                    target:
-                      entity_id: !input exit_timer_entity
-                    data:
-                      duration: !input timeout_seconds
+          - service: light.turn_off
+            target:
+              entity_id: !input light_entity
 
-      # Encoder clockwise
+      # Rotation: adjust brightness based on delta degrees
       - conditions:
-          - condition: and
-            conditions:
-              - condition: trigger
-                id: button_or_encoder
-              - condition: template
-                value_template: "{{ trigger.to_state.state == 'clockwise' }}"
+          - condition: trigger
+            id: rotation
         sequence:
-          - choose:
-              # Normal mode: increase brightness
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'normal' }}"
-                sequence:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      brightness_pct: >-
-                        {% set speed = states(encoder_speed) | float(0) | abs %}
-                        {% set s1 = low_speed_threshold_value %}
-                        {% set s2 = high_speed_threshold_value %}
-                        {% set m1 = 1.0 %}
-                        {% set m2 = medium_speed_multiplier_value %}
-                        {% set m3 = high_speed_multiplier_value %}
-                        {% set mult = m1 %}
-                        {% if speed > s2 %}
-                          {% set mult = m3 %}
-                        {% elif speed > s1 %}
-                          {% set mult = m2 %}
-                        {% endif %}
-                        {% set base = (state_attr(light, 'brightness') | default(0) | int / 2.55) | round(0) %}
-                        {% set step = (brightness_step_value * mult) | round(0) %}
-                        {{ [0, [base + step, 100] | min] | max }}
-              # Hue mode: increase hue
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'hue' }}"
-                sequence:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      hs_color: >-
-                        {% set speed = states(encoder_speed) | float(0) | abs %}
-                        {% set s1 = low_speed_threshold_value %}
-                        {% set s2 = high_speed_threshold_value %}
-                        {% set m1 = 1.0 %}
-                        {% set m2 = medium_speed_multiplier_value %}
-                        {% set m3 = high_speed_multiplier_value %}
-                        {% set mult = m1 %}
-                        {% if speed > s2 %}
-                          {% set mult = m3 %}
-                        {% elif speed > s1 %}
-                          {% set mult = m2 %}
-                        {% endif %}
-                        {% set base_h = state_attr(light, 'hs_color')[0] | default(0) %}
-                        {% set base_s = state_attr(light, 'hs_color')[1] | default(100) %}
-                        {% set step = (hue_step_value * mult) %}
-                        {{ [(base_h + step) % 360, base_s] }}
-              # Color temp mode: warmer (lower mired)
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'color_temp' }}"
-                sequence:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      color_temp: >-
-                        {% set speed = states(encoder_speed) | float(0) | abs %}
-                        {% set s1 = low_speed_threshold_value %}
-                        {% set s2 = high_speed_threshold_value %}
-                        {% set m1 = 1.0 %}
-                        {% set m2 = medium_speed_multiplier_value %}
-                        {% set m3 = high_speed_multiplier_value %}
-                        {% set mult = m1 %}
-                        {% if speed > s2 %}
-                          {% set mult = m3 %}
-                        {% elif speed > s1 %}
-                          {% set mult = m2 %}
-                        {% endif %}
-                        {% set min_m = state_attr(light, 'min_mireds') | default(153) %}
-                        {% set max_m = state_attr(light, 'max_mireds') | default(500) %}
-                        {% set current = state_attr(light, 'color_temp') | default(250) | int %}
-                        {% set step = (mired_step_value * mult) | int %}
-                        {{ [min_m, [max_m, current - step] | min] | max }}
+          - variables:
+              delta: "{{ trigger.to_state.state | float(0) }}"
+          - condition: template
+            value_template: "{{ delta | abs >= min_delta_degrees_value }}"
+          - service: light.turn_on
+            target:
+              entity_id: !input light_entity
+            data:
+              brightness_pct: >-
+                {# Current brightness in %, default 0 if unknown #}
+                {% set current_pct =
+                   ((state_attr(light, 'brightness') | default(0) | int) / 2.55) | round(0)
+                %}
+                {# Step is proportional to delta degrees; 45° == brightness_per_45deg % #}
+                {% set step =
+                   (delta / 45.0 * brightness_per_45deg_value) | round(0)
+                %}
+                {% set result = (current_pct + step) | round(0) %}
+                {{ [0, [result, 100] | min] | max }}
 
-      # Encoder anticlockwise
-      - conditions:
-          - condition: and
-            conditions:
-              - condition: trigger
-                id: button_or_encoder
-              - condition: template
-                value_template: "{{ trigger.to_state.state == 'anticlockwise' }}"
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'normal' }}"
-                sequence:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      brightness_pct: >-
-                        {% set speed = states(encoder_speed) | float(0) | abs %}
-                        {% set s1 = low_speed_threshold_value %}
-                        {% set s2 = high_speed_threshold_value %}
-                        {% set m1 = 1.0 %}
-                        {% set m2 = medium_speed_multiplier_value %}
-                        {% set m3 = high_speed_multiplier_value %}
-                        {% set mult = m1 %}
-                        {% if speed > s2 %}
-                          {% set mult = m3 %}
-                        {% elif speed > s1 %}
-                          {% set mult = m2 %}
-                        {% endif %}
-                        {% set base = (state_attr(light, 'brightness') | default(0) | int / 2.55) | round(0) %}
-                        {% set step = (brightness_step_value * mult) | round(0) %}
-                        {{ [0, [base - step, 100] | min] | max }}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'hue' }}"
-                sequence:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      hs_color: >-
-                        {% set speed = states(encoder_speed) | float(0) | abs %}
-                        {% set s1 = low_speed_threshold_value %}
-                        {% set s2 = high_speed_threshold_value %}
-                        {% set m1 = 1.0 %}
-                        {% set m2 = medium_speed_multiplier_value %}
-                        {% set m3 = high_speed_multiplier_value %}
-                        {% set mult = m1 %}
-                        {% if speed > s2 %}
-                          {% set mult = m3 %}
-                        {% elif speed > s1 %}
-                          {% set mult = m2 %}
-                        {% endif %}
-                        {% set base_h = state_attr(light, 'hs_color')[0] | default(0) %}
-                        {% set base_s = state_attr(light, 'hs_color')[1] | default(100) %}
-                        {% set step = (hue_step_value * mult) %}
-                        {{ [(base_h - step + 360) % 360, base_s] }}
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'color_temp' }}"
-                sequence:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      color_temp: >-
-                        {% set speed = states(encoder_speed) | float(0) | abs %}
-                        {% set s1 = low_speed_threshold_value %}
-                        {% set s2 = high_speed_threshold_value %}
-                        {% set m1 = 1.0 %}
-                        {% set m2 = medium_speed_multiplier_value %}
-                        {% set m3 = high_speed_multiplier_value %}
-                        {% set mult = m1 %}
-                        {% if speed > s2 %}
-                          {% set mult = m3 %}
-                        {% elif speed > s1 %}
-                          {% set mult = m2 %}
-                        {% endif %}
-                        {% set min_m = state_attr(light, 'min_mireds') | default(153) %}
-                        {% set max_m = state_attr(light, 'max_mireds') | default(500) %}
-                        {% set current = state_attr(light, 'color_temp') | default(250) | int %}
-                        {% set step = (mired_step_value * mult) | int %}
-                        {{ [min_m, [max_m, current + step] | min] | max }}
+mode: restart

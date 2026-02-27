@@ -52,7 +52,7 @@ output:
 
 light:
   - platform: rgb
-    name: "${friendly_name} Knob LED"
+    name: "Knob LED"
     id: knob_led
     red: led_red
     green: led_green
@@ -62,7 +62,7 @@ light:
 sensor:
   - platform: rotary_encoder
     id: encoder
-    name: "${friendly_name} Encoder"
+    name: "Encoder"
     pin_a:
       number: GPIO34
       mode: input_pullup
@@ -79,6 +79,7 @@ sensor:
         - lambda: |-
             static int32_t last = 0;
             static uint32_t last_ts = 0;
+            const int32_t counts_per_rev = 80;  // 20 detents * 4 transitions per detent
             uint32_t now = millis();
             int32_t current = (int32_t) x;
             if (last_ts == 0) {
@@ -98,6 +99,20 @@ sensor:
             float delta_detents = delta_counts / resolution;
             float speed = delta_detents * 1000.0f / (float) dt;
             id(encoder_speed).publish_state(speed);
+            // Delta in degrees for this movement (signed)
+            float delta_degrees = (float) delta_counts * 360.0f / (float) counts_per_rev;
+            id(encoder_delta_degrees).publish_state(delta_degrees);
+            // Absolute angle within one revolution [0, 360)
+            int32_t mod_counts = current % counts_per_rev;
+            if (mod_counts < 0) {
+              mod_counts += counts_per_rev;
+            }
+            float angle_degrees = (float) mod_counts * 360.0f / (float) counts_per_rev;
+            id(encoder_angle_degrees).publish_state(angle_degrees);
+            // Signed RPM based on this movement
+            float rev_per_sec = ((float) delta_counts / (float) counts_per_rev) * 1000.0f / (float) dt;
+            float rpm = rev_per_sec * 60.0f;
+            id(encoder_rpm).publish_state(rpm);
             last = current;
             last_ts = now;
         - script.execute: encoder_speed_idle_timer
@@ -120,8 +135,29 @@ sensor:
 
   - platform: template
     id: encoder_speed
-    name: "${friendly_name} Encoder Speed"
+    name: "Encoder Speed"
     unit_of_measurement: "detents/s"
+    accuracy_decimals: 1
+    update_interval: never
+
+  - platform: template
+    id: encoder_rpm
+    name: "Encoder RPM"
+    unit_of_measurement: "rpm"
+    accuracy_decimals: 2
+    update_interval: never
+
+  - platform: template
+    id: encoder_angle_degrees
+    name: "Encoder Angle"
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    update_interval: never
+
+  - platform: template
+    id: encoder_delta_degrees
+    name: "Encoder Delta Degrees"
+    unit_of_measurement: "°"
     accuracy_decimals: 1
     update_interval: never
 
@@ -133,17 +169,23 @@ script:
       - sensor.template.publish:
           id: encoder_speed
           state: 0.0
+      - sensor.template.publish:
+          id: encoder_rpm
+          state: 0.0
+      - sensor.template.publish:
+          id: encoder_delta_degrees
+          state: 0.0
 
 # Template text sensors for HA blueprint triggers (state set by automations below)
 text_sensor:
   - platform: template
     id: encoder_direction_sensor
-    name: "${friendly_name} Encoder Direction"
+    name: "Encoder Direction"
     lambda: "return {\"idle\"};"
     update_interval: never
   - platform: template
     id: button_action_sensor
-    name: "${friendly_name} Button Action"
+    name: "Button Action"
     lambda: "return {\"idle\"};"
     update_interval: never
 
@@ -151,7 +193,7 @@ text_sensor:
 binary_sensor:
   - platform: gpio
     id: encoder_button
-    name: "${friendly_name} Button"
+    name: "Button"
     pin:
       number: GPIO37
       mode: input_pullup
@@ -161,10 +203,16 @@ binary_sensor:
       - timing:
           - ON for at least 0.5s
         then:
+          - binary_sensor.template.publish:
+              id: encoder_button_long
+              state: true
           - text_sensor.template.publish:
               id: button_action_sensor
               state: "long"
           - delay: 200ms
+          - binary_sensor.template.publish:
+              id: encoder_button_long
+              state: false
           - text_sensor.template.publish:
               id: button_action_sensor
               state: "idle"
@@ -174,10 +222,16 @@ binary_sensor:
           - ON for at most 0.5s
           - OFF for at least 0.2s
         then:
+          - binary_sensor.template.publish:
+              id: encoder_button_double
+              state: true
           - text_sensor.template.publish:
               id: button_action_sensor
               state: "double"
           - delay: 200ms
+          - binary_sensor.template.publish:
+              id: encoder_button_double
+              state: false
           - text_sensor.template.publish:
               id: button_action_sensor
               state: "idle"
@@ -185,10 +239,28 @@ binary_sensor:
           - ON for at most 0.5s
           - OFF for at least 0.2s
         then:
+          - binary_sensor.template.publish:
+              id: encoder_button_single
+              state: true
           - text_sensor.template.publish:
               id: button_action_sensor
               state: "single"
           - delay: 200ms
+          - binary_sensor.template.publish:
+              id: encoder_button_single
+              state: false
           - text_sensor.template.publish:
               id: button_action_sensor
               state: "idle"
+
+  - platform: template
+    id: encoder_button_single
+    name: "Button Single"
+
+  - platform: template
+    id: encoder_button_double
+    name: "Button Double"
+
+  - platform: template
+    id: encoder_button_long
+    name: "Button Long"
