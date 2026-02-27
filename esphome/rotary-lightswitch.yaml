@@ -7,6 +7,10 @@ substitutions:
   name: rotary-lightswitch
   friendly_name: Rotary Light Switch
 
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
 esp32:
   board: esp32-s2-saola-1
   framework:
@@ -54,15 +58,6 @@ light:
     green: led_green
     blue: led_blue
     restore_mode: ALWAYS_OFF
-
-script:
-  - id: encoder_direction_idle_timer
-    mode: restart
-    then:
-      - delay: 50ms
-      - text_sensor.template.publish:
-          id: encoder_direction_sensor
-          state: "idle"
 # EC11 rotary encoder: ENC_A=pin_a, ENC_B=pin_b; pull-ups enabled in MCU
 sensor:
   - platform: rotary_encoder
@@ -74,11 +69,38 @@ sensor:
     pin_b:
       number: GPIO36
       mode: input_pullup
-    resolution: 2
+    resolution: 4
     min_value: -32768
     max_value: 32767
     restore_mode: RESTORE_DEFAULT_ZERO
     publish_initial_value: false
+    on_value:
+      then:
+        - lambda: |-
+            static int32_t last = 0;
+            static uint32_t last_ts = 0;
+            uint32_t now = millis();
+            int32_t current = (int32_t) x;
+            if (last_ts == 0) {
+              last_ts = now;
+              last = current;
+              return;
+            }
+            int32_t delta_counts = current - last;
+            if (delta_counts == 0) {
+              return;
+            }
+            uint32_t dt = now - last_ts;
+            if (dt == 0) {
+              return;
+            }
+            const float resolution = 4.0f;
+            float delta_detents = delta_counts / resolution;
+            float speed = delta_detents * 1000.0f / (float) dt;
+            id(encoder_speed).publish_state(speed);
+            last = current;
+            last_ts = now;
+        - script.execute: encoder_speed_idle_timer
     on_clockwise:
       - text_sensor.template.publish:
           id: encoder_direction_sensor
@@ -96,14 +118,21 @@ sensor:
           id: encoder_direction_sensor
           state: "idle"
 
+  - platform: template
+    id: encoder_speed
+    name: "${friendly_name} Encoder Speed"
+    unit_of_measurement: "detents/s"
+    accuracy_decimals: 1
+    update_interval: never
+
 script:
-  - id: encoder_direction_idle_timer
+  - id: encoder_speed_idle_timer
     mode: restart
     then:
       - delay: 50ms
-      - text_sensor.template.publish:
-          id: encoder_direction_sensor
-          state: "idle"
+      - sensor.template.publish:
+          id: encoder_speed
+          state: 0.0
 
 # Template text sensors for HA blueprint triggers (state set by automations below)
 text_sensor:

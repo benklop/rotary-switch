@@ -53,6 +53,12 @@ blueprint:
       selector:
         entity:
           domain: timer
+    encoder_speed_entity:
+      name: Encoder speed sensor
+      description: Sensor reporting signed encoder speed in detents/s
+      selector:
+        entity:
+          domain: sensor
     brightness_step:
       name: Brightness step
       default: 5
@@ -79,6 +85,38 @@ blueprint:
           max: 120
           step: 5
           unit_of_measurement: s
+    low_speed_threshold:
+      name: Low speed threshold (detents/s)
+      default: 1.0
+      selector:
+        number:
+          min: 0.0
+          max: 10.0
+          step: 0.1
+    high_speed_threshold:
+      name: High speed threshold (detents/s)
+      default: 4.0
+      selector:
+        number:
+          min: 0.0
+          max: 20.0
+          step: 0.1
+    medium_speed_multiplier:
+      name: Medium speed multiplier
+      default: 2.0
+      selector:
+        number:
+          min: 1.0
+          max: 10.0
+          step: 0.5
+    high_speed_multiplier:
+      name: High speed multiplier
+      default: 4.0
+      selector:
+        number:
+          min: 1.0
+          max: 20.0
+          step: 0.5
 
 trigger:
   - platform: state
@@ -240,7 +278,22 @@ action:
                     target:
                       entity_id: !input light_entity
                     data:
-                      brightness_pct: "{{ [0, [(state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) + input.brightness_step, 100] | min] | max }}"
+                      brightness_pct: >-
+                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set s1 = input.low_speed_threshold %}
+                        {% set s2 = input.high_speed_threshold %}
+                        {% set m1 = 1.0 %}
+                        {% set m2 = input.medium_speed_multiplier %}
+                        {% set m3 = input.high_speed_multiplier %}
+                        {% set mult = m1 %}
+                        {% if speed > s2 %}
+                          {% set mult = m3 %}
+                        {% elif speed > s1 %}
+                          {% set mult = m2 %}
+                        {% endif %}
+                        {% set base = (state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) %}
+                        {% set step = (input.brightness_step * mult) | round(0) %}
+                        {{ [0, [base + step, 100] | min] | max }}
               # Fan mode: 4 detents per speed step (0–15 counter → levels 0–3)
               - conditions:
                   - condition: template
@@ -318,7 +371,24 @@ action:
                     target:
                       entity_id: !input light_entity
                     data:
-                      color_temp: "{{ [state_attr(input.light_entity, 'min_mireds') | default(153), [state_attr(input.light_entity, 'max_mireds') | default(500), state_attr(input.light_entity, 'color_temp') | default(250) | int - input.mired_step] | min] | max }}"
+                      color_temp: >-
+                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set s1 = input.low_speed_threshold %}
+                        {% set s2 = input.high_speed_threshold %}
+                        {% set m1 = 1.0 %}
+                        {% set m2 = input.medium_speed_multiplier %}
+                        {% set m3 = input.high_speed_multiplier %}
+                        {% set mult = m1 %}
+                        {% if speed > s2 %}
+                          {% set mult = m3 %}
+                        {% elif speed > s1 %}
+                          {% set mult = m2 %}
+                        {% endif %}
+                        {% set min_m = state_attr(input.light_entity, 'min_mireds') | default(153) %}
+                        {% set max_m = state_attr(input.light_entity, 'max_mireds') | default(500) %}
+                        {% set current = state_attr(input.light_entity, 'color_temp') | default(250) | int %}
+                        {% set step = (input.mired_step * mult) | int %}
+                        {{ [min_m, [max_m, current - step] | min] | max }}
 
       # Encoder anticlockwise
       - conditions:
@@ -338,7 +408,22 @@ action:
                     target:
                       entity_id: !input light_entity
                     data:
-                      brightness_pct: "{{ [0, [(state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) - input.brightness_step, 100] | min] | max }}"
+                      brightness_pct: >-
+                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set s1 = input.low_speed_threshold %}
+                        {% set s2 = input.high_speed_threshold %}
+                        {% set m1 = 1.0 %}
+                        {% set m2 = input.medium_speed_multiplier %}
+                        {% set m3 = input.high_speed_multiplier %}
+                        {% set mult = m1 %}
+                        {% if speed > s2 %}
+                          {% set mult = m3 %}
+                        {% elif speed > s1 %}
+                          {% set mult = m2 %}
+                        {% endif %}
+                        {% set base = (state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) %}
+                        {% set step = (input.brightness_step * mult) | round(0) %}
+                        {{ [0, [base - step, 100] | min] | max }}
               # Fan mode: decrease detent counter, update fan and feedback
               - conditions:
                   - condition: template
@@ -417,4 +502,21 @@ action:
                     target:
                       entity_id: !input light_entity
                     data:
-                      color_temp: "{{ [state_attr(input.light_entity, 'min_mireds') | default(153), [state_attr(input.light_entity, 'max_mireds') | default(500), state_attr(input.light_entity, 'color_temp') | default(250) | int + input.mired_step] | min] | max }}"
+                      color_temp: >-
+                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set s1 = input.low_speed_threshold %}
+                        {% set s2 = input.high_speed_threshold %}
+                        {% set m1 = 1.0 %}
+                        {% set m2 = input.medium_speed_multiplier %}
+                        {% set m3 = input.high_speed_multiplier %}
+                        {% set mult = m1 %}
+                        {% if speed > s2 %}
+                          {% set mult = m3 %}
+                        {% elif speed > s1 %}
+                          {% set mult = m2 %}
+                        {% endif %}
+                        {% set min_m = state_attr(input.light_entity, 'min_mireds') | default(153) %}
+                        {% set max_m = state_attr(input.light_entity, 'max_mireds') | default(500) %}
+                        {% set current = state_attr(input.light_entity, 'color_temp') | default(250) | int %}
+                        {% set step = (input.mired_step * mult) | int %}
+                        {{ [min_m, [max_m, current + step] | min] | max }}
