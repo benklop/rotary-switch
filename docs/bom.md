@@ -10,5 +10,5 @@
 | Wire | 22–26 AWG for low voltage between encoder, ESP32, and PSU | ~0.5 m |
 | Mounting screws | For outlet box (through 3 9/32" holes) and for faceplate (into 2 3/8" holes); #6-32 or M3 typical | 4 |
 | 5 mm RGB LED (common cathode) | Tri-color for feedback / night light behind knob | 1 |
-| Resistors | 220 Ω, 1/4 W current-limiting (one per LED channel: R, G, B) | 3 |
+| Resistors | 470 Ω (R), 430 Ω × 2 (G, B), 1/4 W current-limiting | 3 |
 | Optional | Heat-set inserts for faceplate screw holes; double-sided tape or small screws for boards in slots | — |

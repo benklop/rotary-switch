@@ -1,28 +1,27 @@
 # Wiring
 
-## ESP32-S2 Mini (Lolin S2 Mini) ↔ EC11
+## ESP32-S2 Mini (Lolin S2 Mini) ↔ Encoder
 
-| EC11 pin | Function | ESP32-S2 Mini GPIO |
-|----------|----------|---------------------|
-| CLK      | Encoder A | GPIO 34 |
-| DT       | Encoder B | GPIO 36 |
-| SW       | Push button | GPIO 37 |
-| +        | VCC (3.3 V) | 3V3 |
-| GND      | Ground    | GND |
+| Encoder net | Function | ESP32-S2 Mini GPIO |
+|-------------|----------|---------------------|
+| ENC_A       | Encoder A | GPIO 34 |
+| ENC_B       | Encoder B | GPIO 36 |
+| ENC_BTN     | Push button | GPIO 37 |
+| GND         | Ground    | GND |
 
-- Use internal pull-up on CLK and DT (configured in ESPHome). No external resistors required for typical EC11.
-- Encoder VCC can be 3.3 V from the ESP32; do not connect to 5 V unless the encoder is 5 V tolerant and you add level shifting.
+- Enable the ESP32-S2’s internal pull-ups on ENC_A and ENC_B in firmware (see ESPHome config). No external pull-up resistors are provided on the PCB.
+- The EC11 is a passive mechanical gray-code encoder; it does not need a VCC connection.
 
 ## RGB LED (behind knob)
 
 | LED (common cathode) | ESP32-S2 Mini |
 |----------------------|----------------|
-| Red anode            | GPIO 4 (via 220 Ω) |
-| Green anode          | GPIO 5 (via 220 Ω) |
-| Blue anode           | GPIO 6 (via 220 Ω) |
+| Red anode            | GPIO 4 (via 470 Ω) |
+| Green anode          | GPIO 5 (via 430 Ω) |
+| Blue anode           | GPIO 6 (via 430 Ω) |
 | Common cathode       | GND |
 
-- Use a 5 mm common-cathode RGB LED. One 220 Ω current-limiting resistor per channel between GPIO and LED anode.
+- Use a 5 mm common-cathode RGB LED. R: 470 Ω between GPIO4 and anode; G and B: 430 Ω each between GPIO5/GPIO6 and anodes.
 - The LED appears in Home Assistant as a light entity for feedback or night light (e.g. dim red at night).
 
 ## Power
@@ -34,5 +33,5 @@
 ## Summary
 
 1. PSU 5 V → ESP32 VBUS (or 5 V pin), PSU GND → ESP32 GND.
-2. EC11 CLK → GPIO34, DT → GPIO36, SW → GPIO37, VCC → 3V3, GND → GND.
-3. RGB LED: R → GPIO4, G → GPIO5, B → GPIO6 (each via 220 Ω); cathode → GND.
+2. ENC_A → GPIO34, ENC_B → GPIO36, ENC_BTN → GPIO37, GND → GND.
+3. RGB LED: R → GPIO4 via 470 Ω; G → GPIO5, B → GPIO6 (each via 430 Ω); cathode → GND.

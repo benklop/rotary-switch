@@ -1,16 +1,16 @@
 # Rotary Light Switch - ESPHome configuration for ESP32-S2 Mini (Lolin S2 Mini)
-# EC11 rotary encoder (CLK, DT, SW) + push button + RGB LED behind knob
+# EC11 rotary encoder (ENC_A, ENC_B, ENC_BTN) + RGB LED behind knob
 # Board: lolin_s2_mini. Upload: hold GPIO0, press RST to enter flash mode.
-# Wiring: CLK=GPIO34, DT=GPIO36, SW=GPIO37; RGB R=GPIO4, G=GPIO5, B=GPIO6 (220 Ω between each GPIO and anode); cathode to GND; 3V3, GND
+# Wiring: ENC_A=GPIO34, ENC_B=GPIO36, ENC_BTN=GPIO37; RGB R=GPIO4, G=GPIO5, B=GPIO6 (220 Ω between each GPIO and anode); encoder common → GND; LED cathode → GND; 3V3 for ESP32 only
 
 substitutions:
   name: rotary-lightswitch
   friendly_name: Rotary Light Switch
 
 esp32:
-  board: lolin_s2_mini
+  board: esp32-s2-saola-1
   framework:
-    type: arduino
+    type: esp-idf
 
 api:
   encryption:
@@ -31,7 +31,7 @@ captive_portal:
 
 logger:
 
-# RGB LED behind knob (feedback / night light); 220 Ω current-limiting resistor per channel on R, G, B pins
+# RGB LED behind knob (feedback / night light); R: 470 Ω, G/B: 430 Ω each (current-limiting on GPIO side)
 output:
   - platform: ledc
     pin: GPIO4
@@ -55,13 +55,25 @@ light:
     blue: led_blue
     restore_mode: ALWAYS_OFF
 
-# EC11 rotary encoder: CLK=pin_a, DT=pin_b, internal pull-up
+script:
+  - id: encoder_direction_idle_timer
+    mode: restart
+    then:
+      - delay: 50ms
+      - text_sensor.template.publish:
+          id: encoder_direction_sensor
+          state: "idle"
+# EC11 rotary encoder: ENC_A=pin_a, ENC_B=pin_b; pull-ups enabled in MCU
 sensor:
   - platform: rotary_encoder
     id: encoder
     name: "${friendly_name} Encoder"
-    pin_a: GPIO34
-    pin_b: GPIO36
+    pin_a:
+      number: GPIO34
+      mode: input_pullup
+    pin_b:
+      number: GPIO36
+      mode: input_pullup
     resolution: 2
     min_value: -32768
     max_value: 32767
@@ -71,7 +83,7 @@ sensor:
       - text_sensor.template.publish:
           id: encoder_direction_sensor
           state: "clockwise"
-      - delay: 50ms
+      - delay: 10ms
       - text_sensor.template.publish:
           id: encoder_direction_sensor
           state: "idle"
@@ -79,6 +91,15 @@ sensor:
       - text_sensor.template.publish:
           id: encoder_direction_sensor
           state: "anticlockwise"
+      - delay: 10ms
+      - text_sensor.template.publish:
+          id: encoder_direction_sensor
+          state: "idle"
+
+script:
+  - id: encoder_direction_idle_timer
+    mode: restart
+    then:
       - delay: 50ms
       - text_sensor.template.publish:
           id: encoder_direction_sensor
@@ -90,14 +111,14 @@ text_sensor:
     id: encoder_direction_sensor
     name: "${friendly_name} Encoder Direction"
     lambda: "return {\"idle\"};"
-    update_interval: 10s
+    update_interval: never
   - platform: template
     id: button_action_sensor
     name: "${friendly_name} Button Action"
     lambda: "return {\"idle\"};"
-    update_interval: 10s
+    update_interval: never
 
-# Encoder built-in push button (SW)
+# Encoder built-in push button (ENC_BTN)
 binary_sensor:
   - platform: gpio
     id: encoder_button
@@ -120,7 +141,7 @@ binary_sensor:
               state: "idle"
       - timing:
           - ON for at most 0.5s
-          - OFF for at most 0.4s
+          - OFF for at most 0.2s
           - ON for at most 0.5s
           - OFF for at least 0.2s
         then:
@@ -133,7 +154,7 @@ binary_sensor:
               state: "idle"
       - timing:
           - ON for at most 0.5s
-          - OFF for at least 0.4s
+          - OFF for at least 0.2s
         then:
           - text_sensor.template.publish:
               id: button_action_sensor
