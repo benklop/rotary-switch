@@ -11,16 +11,16 @@ blueprint:
           domain: light
     encoder_direction_entity:
       name: Encoder direction sensor
-      description: Text sensor that reports clockwise / anticlockwise / idle (from ESPHome rotary-lightswitch)
+      description: Sensor that reports clockwise / anticlockwise / idle (from ESPHome rotary-lightswitch)
       selector:
         entity:
-          domain: text_sensor
+          domain: sensor
     button_action_entity:
       name: Button action sensor
-      description: Text sensor that reports single / double / long / idle (from ESPHome rotary-lightswitch)
+      description: Sensor that reports single / double / long / idle (from ESPHome rotary-lightswitch)
       selector:
         entity:
-          domain: text_sensor
+          domain: sensor
     mode_select_entity:
       name: Mode helper
       description: input_select with options normal, hue, color_temp (create one and select it here)
@@ -156,7 +156,7 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'hue' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'hue' }}"
                 sequence:
                   - service: input_select.select_option
                     target:
@@ -168,7 +168,7 @@ action:
                       entity_id: !input exit_timer_entity
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) != 'hue' }}"
+                    value_template: "{{ states(!input mode_select_entity) != 'hue' }}"
                 sequence:
                   - service: input_select.select_option
                     target:
@@ -193,7 +193,7 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'color_temp' }}"
                 sequence:
                   - service: input_select.select_option
                     target:
@@ -205,7 +205,7 @@ action:
                       entity_id: !input exit_timer_entity
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) != 'color_temp' }}"
+                    value_template: "{{ states(!input mode_select_entity) != 'color_temp' }}"
                 sequence:
                   - service: input_select.select_option
                     target:
@@ -231,14 +231,14 @@ action:
               # Normal mode: increase brightness
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'normal' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'normal' }}"
                 sequence:
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
                       brightness_pct: >-
-                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set speed = states(!input encoder_speed_entity) | float(0) | abs %}
                         {% set s1 = input.low_speed_threshold %}
                         {% set s2 = input.high_speed_threshold %}
                         {% set m1 = 1.0 %}
@@ -250,20 +250,20 @@ action:
                         {% elif speed > s1 %}
                           {% set mult = m2 %}
                         {% endif %}
-                        {% set base = (state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) %}
+                        {% set base = (state_attr(!input light_entity, 'brightness') | default(0) | int / 2.55) | round(0) %}
                         {% set step = (input.brightness_step * mult) | round(0) %}
                         {{ [0, [base + step, 100] | min] | max }}
               # Hue mode: increase hue
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'hue' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'hue' }}"
                 sequence:
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
                       hs_color: >-
-                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set speed = states(!input encoder_speed_entity) | float(0) | abs %}
                         {% set s1 = input.low_speed_threshold %}
                         {% set s2 = input.high_speed_threshold %}
                         {% set m1 = 1.0 %}
@@ -275,21 +275,21 @@ action:
                         {% elif speed > s1 %}
                           {% set mult = m2 %}
                         {% endif %}
-                        {% set base_h = state_attr(input.light_entity, 'hs_color')[0] | default(0) %}
-                        {% set base_s = state_attr(input.light_entity, 'hs_color')[1] | default(100) %}
+                        {% set base_h = state_attr(!input light_entity, 'hs_color')[0] | default(0) %}
+                        {% set base_s = state_attr(!input light_entity, 'hs_color')[1] | default(100) %}
                         {% set step = (input.hue_step * mult) %}
                         {{ [(base_h + step) % 360, base_s] }}
               # Color temp mode: warmer (lower mired)
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'color_temp' }}"
                 sequence:
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
                       color_temp: >-
-                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set speed = states(!input encoder_speed_entity) | float(0) | abs %}
                         {% set s1 = input.low_speed_threshold %}
                         {% set s2 = input.high_speed_threshold %}
                         {% set m1 = 1.0 %}
@@ -301,9 +301,9 @@ action:
                         {% elif speed > s1 %}
                           {% set mult = m2 %}
                         {% endif %}
-                        {% set min_m = state_attr(input.light_entity, 'min_mireds') | default(153) %}
-                        {% set max_m = state_attr(input.light_entity, 'max_mireds') | default(500) %}
-                        {% set current = state_attr(input.light_entity, 'color_temp') | default(250) | int %}
+                        {% set min_m = state_attr(!input light_entity, 'min_mireds') | default(153) %}
+                        {% set max_m = state_attr(!input light_entity, 'max_mireds') | default(500) %}
+                        {% set current = state_attr(!input light_entity, 'color_temp') | default(250) | int %}
                         {% set step = (input.mired_step * mult) | int %}
                         {{ [min_m, [max_m, current - step] | min] | max }}
 
@@ -319,14 +319,14 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'normal' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'normal' }}"
                 sequence:
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
                       brightness_pct: >-
-                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set speed = states(!input encoder_speed_entity) | float(0) | abs %}
                         {% set s1 = input.low_speed_threshold %}
                         {% set s2 = input.high_speed_threshold %}
                         {% set m1 = 1.0 %}
@@ -338,19 +338,19 @@ action:
                         {% elif speed > s1 %}
                           {% set mult = m2 %}
                         {% endif %}
-                        {% set base = (state_attr(input.light_entity, 'brightness') | default(0) | int / 2.55) | round(0) %}
+                        {% set base = (state_attr(!input light_entity, 'brightness') | default(0) | int / 2.55) | round(0) %}
                         {% set step = (input.brightness_step * mult) | round(0) %}
                         {{ [0, [base - step, 100] | min] | max }}
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'hue' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'hue' }}"
                 sequence:
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
                       hs_color: >-
-                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set speed = states(!input encoder_speed_entity) | float(0) | abs %}
                         {% set s1 = input.low_speed_threshold %}
                         {% set s2 = input.high_speed_threshold %}
                         {% set m1 = 1.0 %}
@@ -362,20 +362,20 @@ action:
                         {% elif speed > s1 %}
                           {% set mult = m2 %}
                         {% endif %}
-                        {% set base_h = state_attr(input.light_entity, 'hs_color')[0] | default(0) %}
-                        {% set base_s = state_attr(input.light_entity, 'hs_color')[1] | default(100) %}
+                        {% set base_h = state_attr(!input light_entity, 'hs_color')[0] | default(0) %}
+                        {% set base_s = state_attr(!input light_entity, 'hs_color')[1] | default(100) %}
                         {% set step = (input.hue_step * mult) %}
                         {{ [(base_h - step + 360) % 360, base_s] }}
               - conditions:
                   - condition: template
-                    value_template: "{{ states(input.mode_select_entity) == 'color_temp' }}"
+                    value_template: "{{ states(!input mode_select_entity) == 'color_temp' }}"
                 sequence:
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
                       color_temp: >-
-                        {% set speed = states(input.encoder_speed_entity) | float(0) | abs %}
+                        {% set speed = states(!input encoder_speed_entity) | float(0) | abs %}
                         {% set s1 = input.low_speed_threshold %}
                         {% set s2 = input.high_speed_threshold %}
                         {% set m1 = 1.0 %}
@@ -387,8 +387,8 @@ action:
                         {% elif speed > s1 %}
                           {% set mult = m2 %}
                         {% endif %}
-                        {% set min_m = state_attr(input.light_entity, 'min_mireds') | default(153) %}
-                        {% set max_m = state_attr(input.light_entity, 'max_mireds') | default(500) %}
-                        {% set current = state_attr(input.light_entity, 'color_temp') | default(250) | int %}
+                        {% set min_m = state_attr(!input light_entity, 'min_mireds') | default(153) %}
+                        {% set max_m = state_attr(!input light_entity, 'max_mireds') | default(500) %}
+                        {% set current = state_attr(!input light_entity, 'color_temp') | default(250) | int %}
                         {% set step = (input.mired_step * mult) | int %}
                         {{ [min_m, [max_m, current + step] | min] | max }}

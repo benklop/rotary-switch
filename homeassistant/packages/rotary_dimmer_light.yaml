@@ -1,0 +1,310 @@
+rotary_dimmer_light:
+  input_select:
+    rotary_light_switch_mode:
+      name: Rotary Light Switch Mode
+      options:
+        - normal
+        - hue
+        - color_temp
+      initial: normal
+
+  timer:
+    rotary_light_switch_mode_exit:
+      name: Rotary Light Switch Mode Exit
+      duration: "00:00:30"
+
+  automation:
+    - id: rotary_light_switch_dimmer
+      alias: Rotary Encoder Dimmer Light (package)
+      mode: restart
+      trigger:
+        - platform: state
+          entity_id:
+            - sensor.rotary_light_switch_button_action
+            - sensor.rotary_light_switch_encoder_direction
+          id: button_or_encoder
+        - platform: state
+          entity_id: timer.rotary_light_switch_mode_exit
+          from: "active"
+          to: "idle"
+          id: timer_finished
+
+      action:
+        - choose:
+            # Timer finished: return to normal mode
+            - conditions:
+                - condition: trigger
+                  id: timer_finished
+              sequence:
+                - service: input_select.select_option
+                  target:
+                    entity_id: input_select.rotary_light_switch_mode
+                  data:
+                    option: "normal"
+
+            # Single press: toggle light
+            - conditions:
+                - condition: and
+                  conditions:
+                    - condition: trigger
+                      id: button_or_encoder
+                    - condition: template
+                      value_template: "{{ trigger.to_state.state == 'single' }}"
+              sequence:
+                - service: light.toggle
+                  target:
+                    entity_id: light.your_light_entity_here
+
+            # Double press: enter hue mode or exit if already in hue
+            - conditions:
+                - condition: and
+                  conditions:
+                    - condition: trigger
+                      id: button_or_encoder
+                    - condition: template
+                      value_template: "{{ trigger.to_state.state == 'double' }}"
+              sequence:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'hue' }}"
+                      sequence:
+                        - service: input_select.select_option
+                          target:
+                            entity_id: input_select.rotary_light_switch_mode
+                          data:
+                            option: "normal"
+                        - service: timer.cancel
+                          target:
+                            entity_id: timer.rotary_light_switch_mode_exit
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') != 'hue' }}"
+                      sequence:
+                        - service: input_select.select_option
+                          target:
+                            entity_id: input_select.rotary_light_switch_mode
+                          data:
+                            option: "hue"
+                        - service: timer.start
+                          target:
+                            entity_id: timer.rotary_light_switch_mode_exit
+                          data:
+                            duration: "00:00:{{ '%02d' | format(30) }}"
+
+            # Long press: enter color_temp mode or exit if already in CT
+            - conditions:
+                - condition: and
+                  conditions:
+                    - condition: trigger
+                      id: button_or_encoder
+                    - condition: template
+                      value_template: "{{ trigger.to_state.state == 'long' }}"
+              sequence:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'color_temp' }}"
+                      sequence:
+                        - service: input_select.select_option
+                          target:
+                            entity_id: input_select.rotary_light_switch_mode
+                          data:
+                            option: "normal"
+                        - service: timer.cancel
+                          target:
+                            entity_id: timer.rotary_light_switch_mode_exit
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') != 'color_temp' }}"
+                      sequence:
+                        - service: input_select.select_option
+                          target:
+                            entity_id: input_select.rotary_light_switch_mode
+                          data:
+                            option: "color_temp"
+                        - service: timer.start
+                          target:
+                            entity_id: timer.rotary_light_switch_mode_exit
+                          data:
+                            duration: "00:00:{{ '%02d' | format(30) }}"
+
+            # Encoder clockwise
+            - conditions:
+                - condition: and
+                  conditions:
+                    - condition: trigger
+                      id: button_or_encoder
+                    - condition: template
+                      value_template: "{{ trigger.to_state.state == 'clockwise' }}"
+              sequence:
+                - choose:
+                    # Normal mode: increase brightness
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'normal' }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: light.your_light_entity_here
+                          data:
+                            brightness_pct: >-
+                              {% set speed = states('sensor.rotary_light_switch_encoder_speed') | float(0) | abs %}
+                              {% set s1 = 1.0 %}
+                              {% set s2 = 4.0 %}
+                              {% set m1 = 1.0 %}
+                              {% set m2 = 2.0 %}
+                              {% set m3 = 4.0 %}
+                              {% set mult = m1 %}
+                              {% if speed > s2 %}
+                                {% set mult = m3 %}
+                              {% elif speed > s1 %}
+                                {% set mult = m2 %}
+                              {% endif %}
+                              {% set base = (state_attr('light.your_light_entity_here', 'brightness') | default(0) | int / 2.55) | round(0) %}
+                              {% set step = (5 * mult) | round(0) %}
+                              {{ [0, [base + step, 100] | min] | max }}
+
+                    # Hue mode: increase hue
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'hue' }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: light.your_light_entity_here
+                          data:
+                            hs_color: >-
+                              {% set speed = states('sensor.rotary_light_switch_encoder_speed') | float(0) | abs %}
+                              {% set s1 = 1.0 %}
+                              {% set s2 = 4.0 %}
+                              {% set m1 = 1.0 %}
+                              {% set m2 = 2.0 %}
+                              {% set m3 = 4.0 %}
+                              {% set mult = m1 %}
+                              {% if speed > s2 %}
+                                {% set mult = m3 %}
+                              {% elif speed > s1 %}
+                                {% set mult = m2 %}
+                              {% endif %}
+                              {% set base_h = state_attr('light.your_light_entity_here', 'hs_color')[0] | default(0) %}
+                              {% set base_s = state_attr('light.your_light_entity_here', 'hs_color')[1] | default(100) %}
+                              {% set step = (5 * mult) %}
+                              {{ [(base_h + step) % 360, base_s] }}
+
+                    # Color temp mode: warmer (lower mired)
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'color_temp' }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: light.your_light_entity_here
+                          data:
+                            color_temp: >-
+                              {% set speed = states('sensor.rotary_light_switch_encoder_speed') | float(0) | abs %}
+                              {% set s1 = 1.0 %}
+                              {% set s2 = 4.0 %}
+                              {% set m1 = 1.0 %}
+                              {% set m2 = 2.0 %}
+                              {% set m3 = 4.0 %}
+                              {% set mult = m1 %}
+                              {% if speed > s2 %}
+                                {% set mult = m3 %}
+                              {% elif speed > s1 %}
+                                {% set mult = m2 %}
+                              {% endif %}
+                              {% set min_m = state_attr('light.your_light_entity_here', 'min_mireds') | default(153) %}
+                              {% set max_m = state_attr('light.your_light_entity_here', 'max_mireds') | default(500) %}
+                              {% set current = state_attr('light.your_light_entity_here', 'color_temp') | default(250) | int %}
+                              {% set step = (10 * mult) | int %}
+                              {{ [min_m, [max_m, current - step] | min] | max }}
+
+            # Encoder anticlockwise
+            - conditions:
+                - condition: and
+                  conditions:
+                    - condition: trigger
+                      id: button_or_encoder
+                    - condition: template
+                      value_template: "{{ trigger.to_state.state == 'anticlockwise' }}"
+              sequence:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'normal' }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: light.your_light_entity_here
+                          data:
+                            brightness_pct: >-
+                              {% set speed = states('sensor.rotary_light_switch_encoder_speed') | float(0) | abs %}
+                              {% set s1 = 1.0 %}
+                              {% set s2 = 4.0 %}
+                              {% set m1 = 1.0 %}
+                              {% set m2 = 2.0 %}
+                              {% set m3 = 4.0 %}
+                              {% set mult = m1 %}
+                              {% if speed > s2 %}
+                                {% set mult = m3 %}
+                              {% elif speed > s1 %}
+                                {% set mult = m2 %}
+                              {% endif %}
+                              {% set base = (state_attr('light.your_light_entity_here', 'brightness') | default(0) | int / 2.55) | round(0) %}
+                              {% set step = (5 * mult) | round(0) %}
+                              {{ [0, [base - step, 100] | min] | max }}
+
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'hue' }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: light.your_light_entity_here
+                          data:
+                            hs_color: >-
+                              {% set speed = states('sensor.rotary_light_switch_encoder_speed') | float(0) | abs %}
+                              {% set s1 = 1.0 %}
+                              {% set s2 = 4.0 %}
+                              {% set m1 = 1.0 %}
+                              {% set m2 = 2.0 %}
+                              {% set m3 = 4.0 %}
+                              {% set mult = m1 %}
+                              {% if speed > s2 %}
+                                {% set mult = m3 %}
+                              {% elif speed > s1 %}
+                                {% set mult = m2 %}
+                              {% endif %}
+                              {% set base_h = state_attr('light.your_light_entity_here', 'hs_color')[0] | default(0) %}
+                              {% set base_s = state_attr('light.your_light_entity_here', 'hs_color')[1] | default(100) %}
+                              {% set step = (5 * mult) %}
+                              {{ [(base_h - step + 360) % 360, base_s] }}
+
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ states('input_select.rotary_light_switch_mode') == 'color_temp' }}"
+                      sequence:
+                        - service: light.turn_on
+                          target:
+                            entity_id: light.your_light_entity_here
+                          data:
+                            color_temp: >-
+                              {% set speed = states('sensor.rotary_light_switch_encoder_speed') | float(0) | abs %}
+                              {% set s1 = 1.0 %}
+                              {% set s2 = 4.0 %}
+                              {% set m1 = 1.0 %}
+                              {% set m2 = 2.0 %}
+                              {% set m3 = 4.0 %}
+                              {% set mult = m1 %}
+                              {% if speed > s2 %}
+                                {% set mult = m3 %}
+                              {% elif speed > s1 %}
+                                {% set mult = m2 %}
+                              {% endif %}
+                              {% set min_m = state_attr('light.your_light_entity_here', 'min_mireds') | default(153) %}
+                              {% set max_m = state_attr('light.your_light_entity_here', 'max_mireds') | default(500) %}
+                              {% set current = state_attr('light.your_light_entity_here', 'color_temp') | default(250) | int %}
+                              {% set step = (10 * mult) | int %}
+                              {{ [min_m, [max_m, current + step] | min] | max }}
+
