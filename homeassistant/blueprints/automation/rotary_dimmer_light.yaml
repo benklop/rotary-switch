@@ -25,36 +25,23 @@ blueprint:
         entity:
           domain: light
 
-    rotary_device:
-      name: Rotary Knob Device
-      description: >-
-        The ESPHome device for your rotary knob. Selecting it here narrows the
-        two dropdowns below to only show entities from that device.
-      selector:
-        device:
-          integration: esphome
-
     encoder_speed_entity:
       name: Encoder Speed sensor
-      description: >-
-        The "Encoder Speed" sensor (det/s) from the rotary knob device. After
-        selecting the device above, only its sensors will appear here.
+      description: >
+        The "Encoder Speed" sensor from the ESPHome device. Publishes a signed
+        float (det/s) on every detent: positive = clockwise, negative = CCW.
       selector:
         entity:
-          filter:
-            - device_id: !input rotary_device
-              domain: sensor
+          domain: sensor
 
     button_single:
       name: Single-press binary sensor
-      description: >-
-        The "Button Single" binary sensor from the rotary knob device. After
-        selecting the device above, only its binary sensors will appear here.
+      description: >
+        The "Button Single" binary sensor from the ESPHome device.
+        Pulses ON briefly on a single press.
       selector:
         entity:
-          filter:
-            - device_id: !input rotary_device
-              domain: binary_sensor
+          domain: binary_sensor
 
     # ── Speed thresholds ────────────────────────────────────────────────────
     slow_threshold:
