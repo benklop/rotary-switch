@@ -1,166 +1,189 @@
 blueprint:
-  name: Rotary Encoder Simple Light (CW/CCW)
+  name: Rotary Encoder Speed-Sensitive Dimmer
   description: >
-    Simple rotary encoder dimmer using ESPHome CW/CCW binary sensors.
-    - Single press: toggle light
-    - CW: increase brightness | CCW: decrease brightness
-    - Double/long press: optional extra actions (off by default)
+    Controls a dimmable light with the rotary encoder. Brightness step size
+    scales automatically with how fast you spin — measured on the ESP32 itself
+    (1 ms resolution) so speed classification is clean and jitter-free.
+
+    Requires the updated rotary-lightswitch ESPHome firmware which publishes
+    an "Encoder Speed" sensor (det/s, signed: + = CW, − = CCW).
+
+    Behavior:
+      - Single press:  toggle light on/off
+      - Slow turn:     small brightness step  (default 3 %)
+      - Medium turn:   medium brightness step (default 10 %)
+      - Fast turn:     large brightness step  (default 25 %)
+
+    No input_number helper required — timing is done on the device.
   domain: automation
 
   input:
     light_entity:
       name: Light
-      description: Light to control
+      description: The dimmable light to control.
       selector:
         entity:
           domain: light
 
-    encoder_cw:
-      name: Encoder CW binary sensor
-      description: ESPHome binary sensor that pulses on clockwise turn (e.g. Encoder CW)
+    encoder_speed_entity:
+      name: Encoder Speed sensor
+      description: >
+        The "Encoder Speed" sensor from the ESPHome device. Publishes a signed
+        float (det/s) on every detent: positive = clockwise, negative = CCW.
       selector:
         entity:
-          domain: binary_sensor
-
-    encoder_ccw:
-      name: Encoder CCW binary sensor
-      description: ESPHome binary sensor that pulses on counterclockwise turn (e.g. Encoder CCW)
-      selector:
-        entity:
-          domain: binary_sensor
+          domain: sensor
 
     button_single:
-      name: Single-press button binary sensor
-      description: ESPHome binary sensor that pulses on a single press (e.g. Button Single)
+      name: Single-press binary sensor
+      description: >
+        The "Button Single" binary sensor from the ESPHome device.
+        Pulses ON briefly on a single press.
       selector:
         entity:
           domain: binary_sensor
 
-    button_double:
-      name: Double-press button binary sensor (optional)
-      description: ESPHome binary sensor that pulses on a double press (e.g. Button Double)
-      default: []
+    # ── Speed thresholds ────────────────────────────────────────────────────
+    slow_threshold:
+      name: Slow / medium threshold (det/s)
+      description: >
+        Turns slower than this are "slow". Typical deliberate single-detent
+        turn is around 1–3 det/s; a comfortable sweep is 5–10 det/s.
+      default: 3.0
       selector:
-        entity:
-          domain: binary_sensor
+        number:
+          min: 0.5
+          max: 10.0
+          step: 0.5
+          unit_of_measurement: "det/s"
 
-    button_long:
-      name: Long-press button binary sensor (optional)
-      description: ESPHome binary sensor that pulses on a long press (e.g. Button Long)
-      default: []
+    fast_threshold:
+      name: Medium / fast threshold (det/s)
+      description: Turns faster than this are "fast".
+      default: 8.0
       selector:
-        entity:
-          domain: binary_sensor
+        number:
+          min: 2.0
+          max: 25.0
+          step: 0.5
+          unit_of_measurement: "det/s"
 
-    brightness_step:
-      name: Brightness step per detent
-      description: How many % to add (CW) or subtract (CCW) per encoder step.
-      default: 5
+    # ── Step sizes ──────────────────────────────────────────────────────────
+    step_slow:
+      name: Slow step (% per detent)
+      description: Brightness change per detent for a slow, deliberate turn.
+      default: 3
       selector:
         number:
           min: 1
-          max: 25
+          max: 15
           step: 1
           unit_of_measurement: "%"
 
+    step_medium:
+      name: Medium step (% per detent)
+      description: Brightness change per detent at a comfortable sweep speed.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: "%"
+
+    step_fast:
+      name: Fast step (% per detent)
+      description: Brightness change per detent when spinning quickly.
+      default: 25
+      selector:
+        number:
+          min: 5
+          max: 50
+          step: 1
+          unit_of_measurement: "%"
+
+    # ── Transition time ─────────────────────────────────────────────────────
+    transition_time:
+      name: Transition time (ms)
+      description: >
+        How long the light takes to reach the new brightness level. Shorter
+        values feel snappier; longer values smooth out rapid successive steps.
+        150–250 ms is a good starting point.
+      default: 150
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: 50
+          unit_of_measurement: ms
+
 variables:
   light: !input light_entity
-  brightness_step_value: !input brightness_step
+  encoder_speed_entity: !input encoder_speed_entity
+  slow_threshold_val: !input slow_threshold
+  fast_threshold_val: !input fast_threshold
+  step_slow_val: !input step_slow
+  step_medium_val: !input step_medium
+  step_fast_val: !input step_fast
+  transition_time_val: !input transition_time
 
 trigger:
-  - id: cw
+  # Every detent (CW or CCW) publishes a new speed value
+  - id: encoder
     platform: state
-    entity_id: !input encoder_cw
-    from: "off"
-    to: "on"
+    entity_id: !input encoder_speed_entity
 
-  - id: ccw
-    platform: state
-    entity_id: !input encoder_ccw
-    from: "off"
-    to: "on"
-
-  - id: button_single
+  - id: single
     platform: state
     entity_id: !input button_single
     from: "off"
     to: "on"
 
-  - id: button_double
-    platform: state
-    entity_id: !input button_double
-    from: "off"
-    to: "on"
-    enabled: false
-
-  - id: button_long
-    platform: state
-    entity_id: !input button_long
-    from: "off"
-    to: "on"
-    enabled: false
-
 action:
   - choose:
-      # Single press: toggle light
+
+      # ── Toggle on single press ────────────────────────────────────────────
       - conditions:
           - condition: trigger
-            id: button_single
+            id: single
         sequence:
           - service: light.toggle
             target:
               entity_id: !input light_entity
 
-      # Double press (optional): turn light to full brightness
+      # ── Brightness adjustment on encoder turn ─────────────────────────────
       - conditions:
           - condition: trigger
-            id: button_double
+            id: encoder
+          # Ignore the unavailable / non-numeric states that can appear briefly
+          - condition: template
+            value_template: >-
+              {{ trigger.to_state.state | float(none) is not none
+                 and trigger.to_state.state != 'unavailable'
+                 and trigger.to_state.state != 'unknown' }}
         sequence:
+          - variables:
+              speed_val: "{{ trigger.to_state.state | float(0) }}"
+              abs_speed: "{{ speed_val | abs }}"
+              # +1 for CW (increase), -1 for CCW (decrease)
+              direction: "{{ 1 if speed_val >= 0 else -1 }}"
+              step: >-
+                {% if abs_speed >= fast_threshold_val %}
+                  {{ step_fast_val }}
+                {% elif abs_speed >= slow_threshold_val %}
+                  {{ step_medium_val }}
+                {% else %}
+                  {{ step_slow_val }}
+                {% endif %}
+              current_pct: >-
+                {{ ((state_attr(light, 'brightness') | default(0) | int) / 2.55) | round(0) }}
+              new_pct: >-
+                {{ [1, [(current_pct | int) + (direction | int) * (step | int), 100] | min] | max }}
           - service: light.turn_on
             target:
               entity_id: !input light_entity
             data:
-              brightness_pct: 100
-
-      # Long press (optional): turn light off
-      - conditions:
-          - condition: trigger
-            id: button_long
-        sequence:
-          - service: light.turn_off
-            target:
-              entity_id: !input light_entity
-
-      # CW: increase brightness
-      - conditions:
-          - condition: trigger
-            id: cw
-        sequence:
-          - service: light.turn_on
-            target:
-              entity_id: !input light_entity
-            data:
-              brightness_pct: >-
-                {% set current_pct =
-                   ((state_attr(light, 'brightness') | default(0) | int) / 2.55) | round(0)
-                %}
-                {% set result = (current_pct + brightness_step_value) | round(0) %}
-                {{ [0, [result, 100] | min] | max }}
-
-      # CCW: decrease brightness
-      - conditions:
-          - condition: trigger
-            id: ccw
-        sequence:
-          - service: light.turn_on
-            target:
-              entity_id: !input light_entity
-            data:
-              brightness_pct: >-
-                {% set current_pct =
-                   ((state_attr(light, 'brightness') | default(0) | int) / 2.55) | round(0)
-                %}
-                {% set result = (current_pct - brightness_step_value) | round(0) %}
-                {{ [0, [result, 100] | min] | max }}
+              brightness_pct: "{{ new_pct }}"
+              transition: "{{ transition_time_val / 1000 }}"
 
 mode: restart

@@ -1,7 +1,9 @@
 # Rotary Light Switch - ESPHome configuration for ESP32-S2 Mini (Lolin S2 Mini)
 # EC11 rotary encoder (ENC_A, ENC_B, ENC_BTN) + RGB LED behind knob
 # Board: lolin_s2_mini. Upload: hold GPIO0, press RST to enter flash mode.
-# Wiring: ENC_A=GPIO34, ENC_B=GPIO36, ENC_BTN=GPIO37; RGB R=GPIO4, G=GPIO5, B=GPIO6 (220 Ω between each GPIO and anode); encoder common → GND; LED cathode → GND; 3V3 for ESP32 only
+# Wiring: ENC_A=GPIO34, ENC_B=GPIO36, ENC_BTN=GPIO37; RGB R=GPIO4, G=GPIO5, B=GPIO6
+#         (470 Ω on R, 430 Ω on G and B, between each GPIO and LED anode)
+#         Encoder common → GND; LED cathode → GND; PSU 5 V → VBUS
 
 substitutions:
   name: rotary-lightswitch
@@ -35,7 +37,18 @@ captive_portal:
 
 logger:
 
-# RGB LED behind knob (feedback / night light); R: 470 Ω, G/B: 430 Ω each (current-limiting on GPIO side)
+# ── Global: tracks millis() of the last encoder detent ──────────────────────
+# Used to compute inter-detent interval → speed in detents/s.
+# Not persisted across reboots (intentional: stale timestamp would give a
+# false "very slow" reading on the first turn after a reboot, which is fine).
+globals:
+  - id: last_enc_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+# ── RGB LED behind knob ──────────────────────────────────────────────────────
+# R: 470 Ω, G/B: 430 Ω each (current-limiting on GPIO side).
 output:
   - platform: ledc
     pin: GPIO4
@@ -58,8 +71,10 @@ light:
     green: led_green
     blue: led_blue
     restore_mode: ALWAYS_OFF
-# EC11 rotary encoder: ENC_A=pin_a, ENC_B=pin_b; pull-ups enabled in MCU
+
+# ── Sensors ──────────────────────────────────────────────────────────────────
 sensor:
+  # Raw encoder position (mostly useful for debugging; HA doesn't need to act on it)
   - platform: rotary_encoder
     id: encoder
     name: "Encoder"
@@ -69,15 +84,25 @@ sensor:
     pin_b:
       number: GPIO36
       mode: input_pullup
-    # 1 "step" per detent; tweak if your hardware is different
-    resolution: 1
+    resolution: 1          # 1 count per detent
     min_value: -32768
     max_value: 32767
     restore_mode: RESTORE_DEFAULT_ZERO
     publish_initial_value: false
 
-    # Each detent step clockwise → one short "press" of encoder_cw
     on_clockwise:
+      # Compute inter-detent interval on-device (1 ms resolution via millis()).
+      # Publish positive speed → HA knows direction + magnitude in one value.
+      # Cap at 2000 ms: the first detent after a long pause would otherwise
+      # compute near-zero speed (huge delta); treat any gap > 2 s as a slow turn.
+      - lambda: |-
+          uint32_t now = millis();
+          uint32_t delta = now - id(last_enc_ms);
+          id(last_enc_ms) = now;
+          float speed = (delta > 0 && delta < 2000)
+                        ? (1000.0f / (float)delta)
+                        : 0.5f;
+          id(encoder_speed).publish_state(speed);   // positive = CW
       - binary_sensor.template.publish:
           id: encoder_cw
           state: true
@@ -86,8 +111,15 @@ sensor:
           id: encoder_cw
           state: false
 
-    # Each detent step counterclockwise → one short "press" of encoder_ccw
     on_anticlockwise:
+      - lambda: |-
+          uint32_t now = millis();
+          uint32_t delta = now - id(last_enc_ms);
+          id(last_enc_ms) = now;
+          float speed = (delta > 0 && delta < 2000)
+                        ? (1000.0f / (float)delta)
+                        : 0.5f;
+          id(encoder_speed).publish_state(-speed);  // negative = CCW
       - binary_sensor.template.publish:
           id: encoder_ccw
           state: true
@@ -96,7 +128,17 @@ sensor:
           id: encoder_ccw
           state: false
 
-# Encoder built-in push button (ENC_BTN)
+  # Speed sensor: detents per second, signed (+ = CW, − = CCW).
+  # Published on every detent alongside the CW/CCW pulse.
+  # HA automation reads sign for direction and magnitude for step size.
+  - platform: template
+    name: "Encoder Speed"
+    id: encoder_speed
+    unit_of_measurement: "det/s"
+    accuracy_decimals: 1
+    # No update_interval; published manually from on_clockwise / on_anticlockwise
+
+# ── Encoder push button ───────────────────────────────────────────────────────
 binary_sensor:
   - platform: gpio
     id: encoder_button
@@ -106,7 +148,7 @@ binary_sensor:
       mode: input_pullup
       inverted: true
     on_multi_click:
-      # Order matters: long first, then double, then single
+      # Order matters: longest match first
       - timing:
           - ON for at least 0.5s
         then:
@@ -154,7 +196,9 @@ binary_sensor:
     id: encoder_button_long
     name: "Button Long"
 
-  # "Virtual" CW / CCW buttons – exposed to Home Assistant
+  # Virtual CW / CCW pulses — one per detent, exposed to Home Assistant.
+  # The automation can use these OR drive purely off the speed sensor;
+  # keeping them means the simple (non-speed-sensitive) blueprint still works.
   - platform: template
     id: encoder_cw
     name: "Encoder CW"
