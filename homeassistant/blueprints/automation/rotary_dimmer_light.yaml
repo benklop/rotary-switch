@@ -102,14 +102,24 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
 
+    # ── Rotation direction ────────────────────────────────────────────────────
+    reverse_rotation:
+      name: Reverse rotation direction
+      description: >-
+        Check to swap the increase/decrease direction. Use this if your encoder
+        is wired so that clockwise turns decrease brightness instead of increasing.
+      default: false
+      selector:
+        boolean:
+
     # ── Transition time ─────────────────────────────────────────────────────
     transition_time:
       name: Transition time (ms)
       description: >
         How long the light takes to reach the new brightness level. Shorter
         values feel snappier; longer values smooth out rapid successive steps.
-        150–250 ms is a good starting point.
-      default: 150
+        50–250 ms is a good starting point.
+      default: 50
       selector:
         number:
           min: 0
@@ -126,6 +136,7 @@ variables:
   step_medium_val: !input step_medium
   step_fast_val: !input step_fast
   transition_time_val: !input transition_time
+  reverse_rotation_val: !input reverse_rotation
 
 trigger:
   # Every detent (CW or CCW) publishes a new speed value
@@ -165,8 +176,8 @@ action:
           - variables:
               speed_val: "{{ trigger.to_state.state | float(0) }}"
               abs_speed: "{{ speed_val | abs }}"
-              # +1 for CW (increase), -1 for CCW (decrease)
-              direction: "{{ 1 if speed_val >= 0 else -1 }}"
+              # −1 for CW (increase), +1 for CCW (decrease); reversed by checkbox
+              direction: "{{ (1 if reverse_rotation_val else -1) if speed_val >= 0 else (-1 if reverse_rotation_val else 1) }}"
               step: >-
                 {% if abs_speed >= fast_threshold_val %}
                   {{ step_fast_val }}
