@@ -1,65 +1,45 @@
 # Rotary Encoder Dimmer Blueprints
 
-Use these blueprints with the ESPHome rotary-lightswitch device to control a dimmable/color light (and optionally a fan). Both blueprints use the **Encoder Speed** sensor for speed-sensitive steps.
+Use these blueprints with the ESPHome **rotary-lightswitch** firmware in this repo. Rotation speed comes from the on-device **Encoder Speed** sensor (det/s).
+
+**No Home Assistant helpers are required.** Flash the firmware, import the blueprint, then pick the **light** (and **fan** for the fan blueprint) plus the **rotary ESPHome device**. Mode (`normal` / `hue` / `color_temp` / `fan`), hue sub-mode (`saturation` / `hue`), and the idle timeout are handled on the ESP32 (`select` + `script` + **Mode Idle Arm** / **Mode Idle Cancel** buttons). Idle duration is the `idle_timeout` substitution in [esphome/rotary-lightswitch.yaml](../../esphome/rotary-lightswitch.yaml).
+
+On-device entity suffixes (for debugging): `_encoder_speed`, `_button_single` / `_button_double` / `_button_long`, `_knob_led`, `_rotary_mode`, `_hue_adjust`, `_mode_idle_arm`, `_mode_idle_cancel`.
 
 ---
 
 ## Blueprint: `rotary_dimmer_rgb.yaml` (speed-sensitive light + hue + color temp)
 
-**Hue mode** starts in **saturation** control so whites gain visible colour before you adjust hue; **single-press** in hue mode toggles between saturation and hue (it does **not** toggle the light).
+**Hue mode** starts in **saturation**; **single-press** in hue mode toggles saturation ↔ hue (does not toggle the room light).
 
-**Colour temperature** uses `light.turn_on` **`color_temp_kelvin`** on the **main light**, with **Kelvin** step sizes. The **knob LED** is **RGB-only** (no CT channel): CT mode is shown with **approximate warm↔cool RGB**, not `color_temp` on that entity.
+**Colour temperature** uses `light.turn_on` **`color_temp_kelvin`** on the main light. The **knob LED** is RGB-only (warm/cool proxy in CT mode).
 
-**Long press**: Flash the rotary firmware from this repo so **Button Long** fires about **500 ms after press while you are still holding** (not on release). That way the automation (and knob LED) enter CT mode as soon as the hold is recognized.
+**Long press**: Firmware fires **Button Long** ~500 ms into the hold so CT mode starts while you are still pressing.
 
 ### Setup
 
-1. **Helpers**:
-   - **Input select (mode)**: Options `normal`, `hue`, `color_temp`.
-   - **Input select (hue sub-mode)**: Options `saturation`, `hue` (e.g. “Rotary hue adjust”).
-   - **Timer**: e.g. 30 s for hue/CT exit after inactivity.
-
-2. **Import** `rotary_dimmer_rgb.yaml` and create the automation: **light**, the ESPHome **rotary device** (one picker), optional “use Knob LED”, **both** input_select helpers, timer, and **Kelvin** CT step inputs. Encoder Speed, Button Single/Double/Long, and Knob LED are taken from the device (entity ids must end with `_encoder_speed`, `_button_single` / `_button_double` / `_button_long`, `_knob_led` — default for this repo’s firmware).
-
-   If you upgrade from an older blueprint version, **delete and re-create** the automation (or re-import the blueprint and save) so inputs match the new schema.
+1. Flash [esphome/rotary-lightswitch.yaml](../../esphome/rotary-lightswitch.yaml).
+2. Import `rotary_dimmer_rgb.yaml`, create the automation: **Light**, **rotary device**, optional “use Knob LED”, optional tuning numbers (defaults are fine).
+3. If upgrading from an older blueprint, **re-create** the automation so inputs match.
 
 ### Behavior
 
-- **Single press**: Toggle light in normal and CT mode; in hue mode, switch between saturation adjust and hue adjust.
-- **Double press**: Enter/exit hue mode (sub-mode resets to saturation when entering or leaving).
-- **Long press**: Enter/exit color temperature mode.
-- **Rotate**: Speed-sensitive brightness, saturation, hue, or CT depending on mode and hue sub-mode.
+- **Single / double / long press** and **rotate**: as in the in-blueprint description (normal / hue / CT; double-press hue in/out).
 
 ---
 
-## Blueprint: `rotary_dimmer_rgb_with_fan.yaml` (speed-sensitive light + fan + hue + color temp)
+## Blueprint: `rotary_dimmer_rgb_with_fan.yaml` (light + fan + hue + CT)
 
-Same **RGB** and **Kelvin CT** behaviour as `rotary_dimmer_rgb.yaml` (saturation-first hue mode, single-press sat↔hue, `color_temp_kelvin` on the main light, knob LED as RGB proxy).
+Same RGB / Kelvin / hue behaviour as the RGB-only blueprint, plus **fan** mode on the device’s mode select.
 
-**Double-press vs fan**: If you configure the optional **fan button** binary sensor, **double-press** toggles **hue** mode and the **fan button** toggles **fan** mode. If you leave the fan button empty, **double-press** toggles **fan** mode instead (RGB hue is then unavailable unless you add a fan button in ESPHome/HA).
+**Double-press vs fan**: Optional **fan button** binary sensor — if set, double-press is for hue and the fan button toggles fan mode; if omitted, double-press toggles fan mode.
 
 ### Setup
 
-1. **Helpers**:
-   - **Input select (mode)**: Options `normal`, `hue`, `fan`, `color_temp`.
-   - **Input select (hue sub-mode)**: Options `saturation`, `hue`.
-   - **Timer**: e.g. 30 s, for leaving hue, fan, or CT mode after inactivity.
-
-2. **Import** `rotary_dimmer_rgb_with_fan.yaml`.
-
-3. **Create automation from blueprint**: **Light**, **fan**, ESPHome **rotary device**, optional **fan button** binary sensor (only if you use a separate control for fan mode), optional “use Knob LED”, **both** mode and hue sub-mode input_selects, exit timer, and Kelvin CT steps. Encoder/button/Knob LED entities are resolved from the rotary device as in the RGB-only blueprint.
-
-   Re-create the automation after a blueprint upgrade if inputs no longer match.
+1. Same firmware as above (mode select includes `fan`).
+2. Import `rotary_dimmer_rgb_with_fan.yaml`: **Light**, **fan**, **rotary device**, optional **fan button**, optional knob LED and tuning inputs.
+3. Remove any legacy `homeassistant/packages/rotary_dimmer_light.yaml` merge if you still had helpers defined there.
 
 ### Behavior
 
-- **Single press**: Toggle light in normal and CT mode; in hue mode, saturation ↔ hue (does not toggle the light).
-- **Double press** (fan button configured): Enter/exit hue from normal or CT; exit fan to normal if you were in fan mode.
-- **Double press** (no fan button): Enter/exit fan mode; rotate in fan mode changes fan percentage with speed-sensitive steps.
-- **Fan button** (when configured): Enter/exit fan mode.
-- **Long press**: Enter/exit colour-temperature mode (`color_temp_kelvin` on the main light).
-- **Feedback LED (optional)**:
-  - Normal mode: off
-  - Hue mode: mirrors main light colour (HS→RGB)
-  - Fan mode: red (off), yellow (low/medium), green (high)
-  - CT mode: warm↔cool RGB proxy (same curve as the non-fan RGB blueprint)
+- As described in the blueprint (fan LED colours, CT, hue, etc.).

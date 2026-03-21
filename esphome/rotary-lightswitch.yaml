@@ -8,6 +8,8 @@
 substitutions:
   name: rotary-lightswitch
   friendly_name: Rotary Light Switch
+  # Idle timeout for hue / colour-temp / fan modes (matches blueprint default).
+  idle_timeout: 30s
 
 esphome:
   name: "${name}"
@@ -37,9 +39,68 @@ captive_portal:
 
 logger:
 
+# ── Mode state on-device (Home Assistant blueprints use select.* / button.* below;
+#    object_id suffixes: _rotary_mode, _hue_adjust, _mode_idle_arm, _mode_idle_cancel) ─
+select:
+  - platform: template
+    name: "Rotary Mode"
+    id: rotary_mode
+    optimistic: true
+    restore_value: true
+    initial_option: normal
+    options:
+      - normal
+      - hue
+      - color_temp
+      - fan
+    set_action:
+      - if:
+          condition:
+            lambda: return x == "normal";
+          then:
+            - script.stop: mode_idle_arm
+          else:
+            - script.execute: mode_idle_arm
+
+  - platform: template
+    name: "Hue Adjust"
+    id: hue_adjust
+    optimistic: true
+    restore_value: true
+    initial_option: saturation
+    options:
+      - saturation
+      - hue
+    set_action:
+      - if:
+          condition:
+            lambda: return id(rotary_mode).state == "hue";
+          then:
+            - script.execute: mode_idle_arm
+
 # ── Long press: fire Button Long ~500 ms after press while still held ─────────
 # (on_multi_click only completes patterns on release, so HA/LED would lag.)
 script:
+  # After ${idle_timeout} without restart, return to normal + saturation (replaces HA timer).
+  - id: mode_idle_arm
+    mode: restart
+    then:
+      - delay: ${idle_timeout}
+      # publish_state avoids template select set_action (would restart idle while still in hue).
+      - lambda: |-
+          id(rotary_mode).publish_state("normal");
+          id(hue_adjust).publish_state("saturation");
+
+  - id: maybe_restart_mode_idle
+    then:
+      - if:
+          condition:
+            lambda: |-
+              auto m = id(rotary_mode).state;
+              return m == "hue" || m == "color_temp" || m == "fan";
+          then:
+            - script.execute: mode_idle_arm
+
   - id: encoder_long_press_arm
     mode: restart
     then:
@@ -129,6 +190,7 @@ sensor:
       - binary_sensor.template.publish:
           id: encoder_cw
           state: false
+      - script.execute: maybe_restart_mode_idle
 
     on_anticlockwise:
       - lambda: |-
@@ -146,6 +208,7 @@ sensor:
       - binary_sensor.template.publish:
           id: encoder_ccw
           state: false
+      - script.execute: maybe_restart_mode_idle
 
   # Speed sensor: detents per second, signed (+ = CW, − = CCW).
   # Published on every detent alongside the CW/CCW pulse.
@@ -220,3 +283,15 @@ binary_sensor:
   - platform: template
     id: encoder_ccw
     name: "Encoder CCW"
+
+# ── HA blueprint: replaces timer.start / timer.cancel ───────────────────────────
+button:
+  - platform: template
+    name: "Mode Idle Arm"
+    on_press:
+      - script.execute: mode_idle_arm
+
+  - platform: template
+    name: "Mode Idle Cancel"
+    on_press:
+      - script.stop: mode_idle_arm

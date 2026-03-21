@@ -8,9 +8,9 @@ blueprint:
     Requires the updated rotary-lightswitch ESPHome firmware which publishes
     an "Encoder Speed" sensor (det/s, signed: + = CW, − = CCW).
 
-    Pick the ESPHome **device** once; encoder, button, and knob LED entities are
-    resolved from the device registry (names: Encoder Speed, Button Single/Double/Long,
-    Knob LED — default ESPHome object_ids: *_encoder_speed, *_button_*, *_knob_led).
+    Pick the ESPHome **device** once; encoder, button, Knob LED, **Rotary Mode** / **Hue Adjust**
+    selects, and **Mode Idle Arm/Cancel** buttons are resolved from the device (no HA helpers).
+    Idle timeout is fixed in ESPHome (`idle_timeout` substitution in the device YAML).
 
     Behavior:
       - Single press:  toggle light on/off (in normal and CT mode); in hue mode, toggles between
@@ -23,7 +23,7 @@ blueprint:
       - Knob LED (optional): RGB-only proxy — off in normal when the room light is on or the sun is up;
         soft orange night glow when the main light is off after sunset (normal mode only); HS→RGB in hue mode;
         in CT mode, amber↔blue-white RGB (main light still uses color_temp_kelvin).
-      - The timer resets on every rotation and when single-pressing in hue mode (sub-mode toggle).
+      - Idle exit is handled on the device (encoder + HA blueprint arm the same restartable script); rotation resets it.
   domain: automation
 
   input:
@@ -50,34 +50,6 @@ blueprint:
       default: true
       selector:
         boolean:
-
-    mode_select_entity:
-      name: Mode helper (input_select)
-      description: >
-        Create an input_select with exactly these three options (in this order):
-        normal, hue, color_temp
-      selector:
-        entity:
-          domain: input_select
-
-    hue_submode_entity:
-      name: Hue sub-mode helper (input_select)
-      description: >
-        While in hue mode, whether the knob changes saturation or hue angle.
-        Create an input_select with exactly these two options: saturation, hue
-        (order does not matter). Reset automatically when entering hue mode and when leaving it.
-      selector:
-        entity:
-          domain: input_select
-
-    exit_timer_entity:
-      name: Exit timer
-      description: >
-        Timer that auto-exits hue/CT mode after inactivity.
-        Each encoder rotation resets it, so the mode persists while you're actively turning.
-      selector:
-        entity:
-          domain: timer
 
     # ── Speed thresholds ────────────────────────────────────────────────────
     slow_threshold:
@@ -266,17 +238,6 @@ blueprint:
           step: 50
           unit_of_measurement: ms
 
-    timeout_seconds:
-      name: Hue / CT mode timeout (seconds)
-      description: Returns to normal mode this many seconds after the last rotation or mode entry.
-      default: 30
-      selector:
-        number:
-          min: 10
-          max: 120
-          step: 5
-          unit_of_measurement: s
-
     enable_knob_night_light:
       name: Knob night light
       description: >
@@ -310,8 +271,11 @@ variables:
   button_double_eid: "{{ _de | select('match', '^binary_sensor\\..*_button_double$') | list | first | default('') }}"
   button_long_eid: "{{ _de | select('match', '^binary_sensor\\..*_button_long$') | list | first | default('') }}"
   knob_led_eid: "{{ _de | select('match', '^light\\..*_knob_led$') | list | first | default('') }}"
+  mode_select_eid: "{{ _de | select('match', '^select\\..*_rotary_mode$') | list | first | default('') }}"
+  hue_submode_eid: "{{ _de | select('match', '^select\\..*_hue_adjust$') | list | first | default('') }}"
+  mode_idle_arm_eid: "{{ _de | select('match', '^button\\..*_mode_idle_arm$') | list | first | default('') }}"
+  mode_idle_cancel_eid: "{{ _de | select('match', '^button\\..*_mode_idle_cancel$') | list | first | default('') }}"
   use_knob_led: !input use_knob_led_feedback
-  mode_select: !input mode_select_entity
   slow_threshold_val: !input slow_threshold
   fast_threshold_val: !input fast_threshold
   brightness_step_slow_val: !input brightness_step_slow
@@ -320,7 +284,6 @@ variables:
   hue_step_slow_val: !input hue_step_slow
   hue_step_medium_val: !input hue_step_medium
   hue_step_fast_val: !input hue_step_fast
-  hue_submode: !input hue_submode_entity
   saturation_step_slow_val: !input saturation_step_slow
   saturation_step_medium_val: !input saturation_step_medium
   saturation_step_fast_val: !input saturation_step_fast
@@ -329,7 +292,6 @@ variables:
   kelvin_step_fast_val: !input color_temp_kelvin_step_fast
   reverse_rotation_val: !input reverse_rotation
   transition_time_val: !input transition_time
-  timeout_seconds_value: !input timeout_seconds
   enable_knob_night_light_val: !input enable_knob_night_light
   night_light_brightness_pct_val: !input night_light_brightness_pct
 
@@ -364,11 +326,11 @@ trigger:
     event_data:
       entity_id: "{{ device_entities(rotary_device_id) | select('match', '^binary_sensor\\..*_button_long$') | list | first }}"
 
-  - id: timer_finished
-    platform: state
-    entity_id: !input exit_timer_entity
-    from: "active"
-    to: "idle"
+  - id: mode_idle_exit_led
+    platform: event
+    event_type: state_changed
+    event_data:
+      entity_id: "{{ device_entities(rotary_device_id) | select('match', '^select\\..*_rotary_mode$') | list | first }}"
 
 action:
   - choose:
@@ -386,7 +348,7 @@ action:
                   - conditions:
                       - condition: template
                         value_template: >
-                          {{ enable_knob_night_light_val and states(mode_select) == 'normal'
+                          {{ enable_knob_night_light_val and states(mode_select_eid) == 'normal'
                              and is_state(light, 'off') and is_state('sun.sun', 'below_horizon') }}
                     sequence:
                       - service: light.turn_on
@@ -397,27 +359,23 @@ action:
                           rgb_color: [255, 72, 12]
                   - conditions:
                       - condition: template
-                        value_template: "{{ states(mode_select) == 'normal' }}"
+                        value_template: "{{ states(mode_select_eid) == 'normal' }}"
                     sequence:
                       - service: light.turn_off
                         target:
                           entity_id: "{{ knob_led_eid }}"
 
-      # ── Timer expired → return to normal ──────────────────────────
+      # ── Device idle timeout: mode select → normal (firmware); sync knob LED ───
       - conditions:
           - condition: trigger
-            id: timer_finished
+            id: mode_idle_exit_led
+          - condition: template
+            value_template: >-
+              {% set o = trigger.event.data.old_state %}
+              {% set n = trigger.event.data.new_state %}
+              {{ o is not none and o.state in ['hue', 'color_temp', 'fan']
+                 and n is not none and n.state == 'normal' }}
         sequence:
-          - service: input_select.select_option
-            target:
-              entity_id: !input mode_select_entity
-            data:
-              option: normal
-          - service: input_select.select_option
-            target:
-              entity_id: !input hue_submode_entity
-            data:
-              option: saturation
           - if:
               - condition: template
                 value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
@@ -454,29 +412,27 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ states(mode_select) == 'hue' }}"
+                    value_template: "{{ states(mode_select_eid) == 'hue' }}"
                 sequence:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ states(hue_submode) == 'saturation' }}"
+                            value_template: "{{ states(hue_submode_eid) == 'saturation' }}"
                         sequence:
-                          - service: input_select.select_option
+                          - service: select.select_option
                             target:
-                              entity_id: !input hue_submode_entity
+                              entity_id: "{{ hue_submode_eid }}"
                             data:
                               option: hue
                     default:
-                      - service: input_select.select_option
+                      - service: select.select_option
                         target:
-                          entity_id: !input hue_submode_entity
+                          entity_id: "{{ hue_submode_eid }}"
                         data:
                           option: saturation
-                  - service: timer.start
+                  - service: button.press
                     target:
-                      entity_id: !input exit_timer_entity
-                    data:
-                      duration: "{{ timeout_seconds_value }}"
+                      entity_id: "{{ mode_idle_arm_eid }}"
             default:
               - variables:
                   light_was_on: "{{ is_state(light, 'on') }}"
@@ -520,21 +476,21 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ states(mode_select) == 'hue' }}"
+                    value_template: "{{ states(mode_select_eid) == 'hue' }}"
                 sequence:
-                  - service: input_select.select_option
+                  - service: select.select_option
                     target:
-                      entity_id: !input mode_select_entity
+                      entity_id: "{{ mode_select_eid }}"
                     data:
                       option: normal
-                  - service: input_select.select_option
+                  - service: select.select_option
                     target:
-                      entity_id: !input hue_submode_entity
+                      entity_id: "{{ hue_submode_eid }}"
                     data:
                       option: saturation
-                  - service: timer.cancel
+                  - service: button.press
                     target:
-                      entity_id: !input exit_timer_entity
+                      entity_id: "{{ mode_idle_cancel_eid }}"
                   - if:
                       - condition: template
                         value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
@@ -557,21 +513,19 @@ action:
                             target:
                               entity_id: "{{ knob_led_eid }}"
             default:
-              - service: input_select.select_option
+              - service: select.select_option
                 target:
-                  entity_id: !input mode_select_entity
+                  entity_id: "{{ mode_select_eid }}"
                 data:
                   option: hue
-              - service: input_select.select_option
+              - service: select.select_option
                 target:
-                  entity_id: !input hue_submode_entity
+                  entity_id: "{{ hue_submode_eid }}"
                 data:
                   option: saturation
-              - service: timer.start
+              - service: button.press
                 target:
-                  entity_id: !input exit_timer_entity
-                data:
-                  duration: "{{ timeout_seconds_value }}"
+                  entity_id: "{{ mode_idle_arm_eid }}"
               # Set knob LED to the current hue of the controlled light
               - if:
                   - condition: template
@@ -609,16 +563,16 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ states(mode_select) == 'color_temp' }}"
+                    value_template: "{{ states(mode_select_eid) == 'color_temp' }}"
                 sequence:
-                  - service: input_select.select_option
+                  - service: select.select_option
                     target:
-                      entity_id: !input mode_select_entity
+                      entity_id: "{{ mode_select_eid }}"
                     data:
                       option: normal
-                  - service: timer.cancel
+                  - service: button.press
                     target:
-                      entity_id: !input exit_timer_entity
+                      entity_id: "{{ mode_idle_cancel_eid }}"
                   - if:
                       - condition: template
                         value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
@@ -641,16 +595,14 @@ action:
                             target:
                               entity_id: "{{ knob_led_eid }}"
             default:
-              - service: input_select.select_option
+              - service: select.select_option
                 target:
-                  entity_id: !input mode_select_entity
+                  entity_id: "{{ mode_select_eid }}"
                 data:
                   option: color_temp
-              - service: timer.start
+              - service: button.press
                 target:
-                  entity_id: !input exit_timer_entity
-                data:
-                  duration: "{{ timeout_seconds_value }}"
+                  entity_id: "{{ mode_idle_arm_eid }}"
               # Knob LED (RGB only): proxy warm↔cool; _t=0 warm low-K, _t=1 cool high-K
               - if:
                   - condition: template
@@ -753,7 +705,7 @@ action:
               # Normal mode: brightness adjustment
               - conditions:
                   - condition: template
-                    value_template: "{{ states(mode_select) == 'normal' }}"
+                    value_template: "{{ states(mode_select_eid) == 'normal' }}"
                 sequence:
                   - variables:
                       current_pct: >-
@@ -770,13 +722,13 @@ action:
               # Hue mode: saturation (default) or hue angle, by sub-mode helper
               - conditions:
                   - condition: template
-                    value_template: "{{ states(mode_select) == 'hue' }}"
+                    value_template: "{{ states(mode_select_eid) == 'hue' }}"
                 sequence:
                   - choose:
                       # Saturation sub-mode: keep hue, change S (0–100)
                       - conditions:
                           - condition: template
-                            value_template: "{{ states(hue_submode) == 'saturation' }}"
+                            value_template: "{{ states(hue_submode_eid) == 'saturation' }}"
                         sequence:
                           - variables:
                               _hs: "{{ state_attr(light, 'hs_color') }}"
@@ -808,15 +760,13 @@ action:
                                     - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
                                     - "{{ (([_x_, _c_, _c_, _x_, 0, 0][_i_ | int] + _m_) * 255) | int }}"
                                     - "{{ (([0, 0, _x_, _c_, _c_, _x_][_i_ | int] + _m_) * 255) | int }}"
-                          - service: timer.start
+                          - service: button.press
                             target:
-                              entity_id: !input exit_timer_entity
-                            data:
-                              duration: "{{ timeout_seconds_value }}"
+                              entity_id: "{{ mode_idle_arm_eid }}"
                       # Hue-angle sub-mode: keep saturation, change H
                       - conditions:
                           - condition: template
-                            value_template: "{{ states(hue_submode) == 'hue' }}"
+                            value_template: "{{ states(hue_submode_eid) == 'hue' }}"
                         sequence:
                           - variables:
                               _hs: "{{ state_attr(light, 'hs_color') }}"
@@ -848,16 +798,14 @@ action:
                                     - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
                                     - "{{ (([_x_, _c_, _c_, _x_, 0, 0][_i_ | int] + _m_) * 255) | int }}"
                                     - "{{ (([0, 0, _x_, _c_, _c_, _x_][_i_ | int] + _m_) * 255) | int }}"
-                          - service: timer.start
+                          - service: button.press
                             target:
-                              entity_id: !input exit_timer_entity
-                            data:
-                              duration: "{{ timeout_seconds_value }}"
+                              entity_id: "{{ mode_idle_arm_eid }}"
 
               # Color temperature mode: Kelvin via color_temp_kelvin (works with modern HA attrs)
               - conditions:
                   - condition: template
-                    value_template: "{{ states(mode_select) == 'color_temp' }}"
+                    value_template: "{{ states(mode_select_eid) == 'color_temp' }}"
                 sequence:
                   - variables:
                       _min_k: >-
@@ -912,10 +860,8 @@ action:
                             - "{{ _r }}"
                             - "{{ _g }}"
                             - "{{ _b }}"
-                  - service: timer.start
+                  - service: button.press
                     target:
-                      entity_id: !input exit_timer_entity
-                    data:
-                      duration: "{{ timeout_seconds_value }}"
+                      entity_id: "{{ mode_idle_arm_eid }}"
 
 mode: restart
