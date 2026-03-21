@@ -52,3 +52,31 @@ Alternate version: **double-press** switches to **fan speed** control instead of
 - **Long press**: Enter color temperature mode; rotate to change CT. Exit after timeout or long-press again.
 
 Fan speeds are mapped to percentages: off (0%), low (33%), medium (66%), high (100%). Use a fan that supports percentage or equivalent presets.
+
+---
+
+## Blueprint: `rotary_dimmer_rgb_with_fan.yaml` (speed-sensitive light + fan + color temp)
+
+Speed-sensitive variant that uses the ESPHome `Encoder Speed` sensor like `rotary_dimmer_light.yaml`, but with fan mode behavior inspired by the fan blueprint.
+
+### Setup
+
+1. **Create helpers** (Settings -> Devices & Services -> Helpers):
+    - **Input select**: Options `normal`, `fan`, `color_temp`.
+    - **Timer**: e.g. 30 s, used to leave fan/CT mode after inactivity.
+
+2. **Import the blueprint** and select `rotary_dimmer_rgb_with_fan.yaml`.
+
+3. **Create automation from blueprint**: Select the **light**, **fan**, optional **feedback light** (knob LED), **Encoder Speed** sensor, button binary sensors (single/double/long), mode input_select, and exit timer.
+
+### Behavior
+
+- **Single press**: Toggle light on/off.
+- **Rotate (normal mode)**: Brightness up/down, with slow/medium/fast steps based on encoder speed.
+- **Double press**: Enter/exit **fan mode**; rotate to change fan percentage with speed-sensitive step size.
+- **Long press**: Enter/exit **color temperature mode**; rotate to change CT with speed-sensitive step size.
+- **Fan/CT timeout**: Returns to normal mode after inactivity (timer resets on rotation).
+- **Feedback LED (optional)**:
+   - Normal mode: off
+   - Fan mode: red (off), yellow (low/medium), green (high)
+   - CT mode: cool blue-white <-> warm amber
