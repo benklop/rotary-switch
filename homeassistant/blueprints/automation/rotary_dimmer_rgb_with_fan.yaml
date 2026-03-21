@@ -902,46 +902,22 @@ action:
               speed_val: "{{ trigger.event.data.new_state.state | float(0) }}"
               abs_speed: "{{ speed_val | abs }}"
               direction: "{{ (1 if reverse_rotation_val else -1) if speed_val >= 0 else (-1 if reverse_rotation_val else 1) }}"
+              # One speed tier for all modes (same det/s thresholds everywhere).
+              speed_tier_idx: >-
+                {% set s = abs_speed | float(0) %}
+                {% if s >= fast_threshold_val | float(0) %}2
+                {% elif s >= slow_threshold_val | float(0) %}1
+                {% else %}0{% endif %}
               brightness_step: >-
-                {% if abs_speed >= fast_threshold_val %}
-                  {{ brightness_step_fast_val }}
-                {% elif abs_speed >= slow_threshold_val %}
-                  {{ brightness_step_medium_val }}
-                {% else %}
-                  {{ brightness_step_slow_val }}
-                {% endif %}
+                {{ [brightness_step_slow_val, brightness_step_medium_val, brightness_step_fast_val][speed_tier_idx | trim | int] }}
               hue_step: >-
-                {% if abs_speed >= fast_threshold_val %}
-                  {{ hue_step_fast_val }}
-                {% elif abs_speed >= slow_threshold_val %}
-                  {{ hue_step_medium_val }}
-                {% else %}
-                  {{ hue_step_slow_val }}
-                {% endif %}
+                {{ [hue_step_slow_val, hue_step_medium_val, hue_step_fast_val][speed_tier_idx | trim | int] }}
               saturation_step: >-
-                {% if abs_speed >= fast_threshold_val %}
-                  {{ saturation_step_fast_val }}
-                {% elif abs_speed >= slow_threshold_val %}
-                  {{ saturation_step_medium_val }}
-                {% else %}
-                  {{ saturation_step_slow_val }}
-                {% endif %}
+                {{ [saturation_step_slow_val, saturation_step_medium_val, saturation_step_fast_val][speed_tier_idx | trim | int] }}
               fan_step: >-
-                {% if abs_speed >= fast_threshold_val %}
-                  {{ fan_step_fast_val }}
-                {% elif abs_speed >= slow_threshold_val %}
-                  {{ fan_step_medium_val }}
-                {% else %}
-                  {{ fan_step_slow_val }}
-                {% endif %}
+                {{ [fan_step_slow_val, fan_step_medium_val, fan_step_fast_val][speed_tier_idx | trim | int] }}
               kelvin_step: >-
-                {% if abs_speed >= fast_threshold_val %}
-                  {{ kelvin_step_fast_val }}
-                {% elif abs_speed >= slow_threshold_val %}
-                  {{ kelvin_step_medium_val }}
-                {% else %}
-                  {{ kelvin_step_slow_val }}
-                {% endif %}
+                {{ [kelvin_step_slow_val, kelvin_step_medium_val, kelvin_step_fast_val][speed_tier_idx | trim | int] }}
           - choose:
 
               - conditions:
