@@ -1,14 +1,21 @@
 blueprint:
-  name: Rotary Encoder Full Color Light (CW/CCW)
+  name: Rotary Encoder Speed-Sensitive RGB Color Light
   description: >
     Controls a dimmable/color light with three modes selectable by the encoder button.
-    • Single press  → toggle on/off
-    • Rotate (normal mode) → dim / brighten
-    • Double press  → enter hue mode; rotate to cycle colour; double-press again (or timeout) to exit
-    • Long press    → enter colour-temperature mode; rotate to change CT; long-press again (or timeout) to exit
-    Knob LED (optional): off in normal mode, mirrors the light's current hue in hue mode,
-    and shifts between warm amber and cool blue in CT mode. The timer resets on every rotation
-    so the mode only exits after a period of inactivity.
+    Brightness step size scales automatically with how fast you spin — measured on the 
+    ESP32 itself (1 ms resolution) so speed classification is clean and jitter-free.
+
+    Requires the updated rotary-lightswitch ESPHome firmware which publishes
+    an "Encoder Speed" sensor (det/s, signed: + = CW, − = CCW).
+
+    Behavior:
+      - Single press:  toggle light on/off
+      - Rotate (normal mode): dim / brighten (speed-sensitive)
+      - Double press:  enter hue mode; rotate to cycle colour; double-press again (or timeout) to exit
+      - Long press:    enter colour-temperature mode; rotate to change CT; long-press again (or timeout) to exit
+      - Knob LED (optional): off in normal mode, mirrors the light's current hue in hue mode,
+        and shifts between warm amber and cool blue in CT mode.
+      - The timer resets on every rotation so the mode only exits after a period of inactivity.
   domain: automation
 
   input:
@@ -31,19 +38,14 @@ blueprint:
         entity:
           domain: light
 
-    encoder_cw:
-      name: Encoder CW binary sensor
-      description: Pulses on each clockwise detent (e.g. "Encoder CW" from ESPHome).
+    encoder_speed_entity:
+      name: Encoder Speed sensor
+      description: >
+        The "Encoder Speed" sensor from the ESPHome device. Publishes a signed
+        float (det/s) on every detent: positive = clockwise, negative = CCW.
       selector:
         entity:
-          domain: binary_sensor
-
-    encoder_ccw:
-      name: Encoder CCW binary sensor
-      description: Pulses on each counter-clockwise detent.
-      selector:
-        entity:
-          domain: binary_sensor
+          domain: sensor
 
     button_single:
       name: Single-press binary sensor
@@ -84,18 +86,80 @@ blueprint:
         entity:
           domain: timer
 
-    brightness_step:
-      name: Brightness step per detent
+    # ── Speed thresholds ────────────────────────────────────────────────────
+    slow_threshold:
+      name: Slow / medium threshold (det/s)
+      description: >
+        Turns slower than this are "slow". Typical deliberate single-detent
+        turn is around 1–3 det/s; a comfortable sweep is 5–10 det/s.
+      default: 3.0
+      selector:
+        number:
+          min: 0.5
+          max: 10.0
+          step: 0.5
+          unit_of_measurement: "det/s"
+
+    fast_threshold:
+      name: Medium / fast threshold (det/s)
+      description: Turns faster than this are "fast".
+      default: 8.0
+      selector:
+        number:
+          min: 2.0
+          max: 25.0
+          step: 0.5
+          unit_of_measurement: "det/s"
+
+    # ── Brightness step sizes ─────────────────────────────────────────────────
+    brightness_step_slow:
+      name: Brightness slow step (% per detent)
+      description: Brightness change per detent for a slow, deliberate turn.
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 15
+          step: 1
+          unit_of_measurement: "%"
+
+    brightness_step_medium:
+      name: Brightness medium step (% per detent)
+      description: Brightness change per detent at a comfortable sweep speed.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: "%"
+
+    brightness_step_fast:
+      name: Brightness fast step (% per detent)
+      description: Brightness change per detent when spinning quickly.
+      default: 25
+      selector:
+        number:
+          min: 5
+          max: 50
+          step: 1
+          unit_of_measurement: "%"
+
+    # ── Hue step sizes ──────────────────────────────────────────────────────
+    hue_step_slow:
+      name: Hue slow step (degrees per detent)
+      description: Hue change per detent for a slow turn.
       default: 5
       selector:
         number:
           min: 1
-          max: 25
+          max: 30
           step: 1
-          unit_of_measurement: "%"
+          unit_of_measurement: "°"
 
-    hue_step:
-      name: Hue step per detent (degrees, 0–360)
+    hue_step_medium:
+      name: Hue medium step (degrees per detent)
+      description: Hue change per detent at a comfortable sweep speed.
       default: 10
       selector:
         number:
@@ -104,8 +168,20 @@ blueprint:
           step: 1
           unit_of_measurement: "°"
 
-    mired_step:
-      name: Colour temperature step per detent (mireds)
+    hue_step_fast:
+      name: Hue fast step (degrees per detent)
+      description: Hue change per detent when spinning quickly.
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 60
+          step: 1
+          unit_of_measurement: "°"
+
+    # ── Color temperature step sizes ────────────────────────────────────────
+    mired_step_slow:
+      name: Colour temperature slow step (mireds)
       description: "CW = warmer (higher mireds / lower Kelvin), CCW = cooler."
       default: 10
       selector:
@@ -113,6 +189,51 @@ blueprint:
           min: 5
           max: 50
           step: 5
+
+    mired_step_medium:
+      name: Colour temperature medium step (mireds)
+      description: Color temperature change at a comfortable speed.
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 75
+          step: 5
+
+    mired_step_fast:
+      name: Colour temperature fast step (mireds)
+      description: Color temperature change when spinning quickly.
+      default: 35
+      selector:
+        number:
+          min: 10
+          max: 100
+          step: 5
+
+    # ── Rotation direction ────────────────────────────────────────────────────
+    reverse_rotation:
+      name: Reverse rotation direction
+      description: >-
+        Check to swap the increase/decrease direction. Use this if your encoder
+        is wired so that clockwise turns decrease values instead of increasing.
+      default: false
+      selector:
+        boolean:
+
+    # ── Transition time ─────────────────────────────────────────────────────
+    transition_time:
+      name: Transition time (ms)
+      description: >
+        How long the light takes to reach the new value. Shorter
+        values feel snappier; longer values smooth out rapid successive steps.
+        50–250 ms is a good starting point.
+      default: 50
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: 50
+          unit_of_measurement: ms
 
     timeout_seconds:
       name: Hue / CT mode timeout (seconds)
@@ -129,23 +250,25 @@ variables:
   light: !input light_entity
   feedback_light: !input feedback_light_entity
   mode_select: !input mode_select_entity
-  brightness_step_value: !input brightness_step
-  hue_step_value: !input hue_step
-  mired_step_value: !input mired_step
+  slow_threshold_val: !input slow_threshold
+  fast_threshold_val: !input fast_threshold
+  brightness_step_slow_val: !input brightness_step_slow
+  brightness_step_medium_val: !input brightness_step_medium
+  brightness_step_fast_val: !input brightness_step_fast
+  hue_step_slow_val: !input hue_step_slow
+  hue_step_medium_val: !input hue_step_medium
+  hue_step_fast_val: !input hue_step_fast
+  mired_step_slow_val: !input mired_step_slow
+  mired_step_medium_val: !input mired_step_medium
+  mired_step_fast_val: !input mired_step_fast
+  reverse_rotation_val: !input reverse_rotation
+  transition_time_val: !input transition_time
   timeout_seconds_value: !input timeout_seconds
 
 trigger:
-  - id: cw
+  - id: encoder
     platform: state
-    entity_id: !input encoder_cw
-    from: "off"
-    to: "on"
-
-  - id: ccw
-    platform: state
-    entity_id: !input encoder_ccw
-    from: "off"
-    to: "on"
+    entity_id: !input encoder_speed_entity
 
   - id: button_single
     platform: state
@@ -318,27 +441,66 @@ action:
                         - "{{ (220 - 73 * _t) | int }}"
                         - "{{ (255 - 214 * _t) | int }}"
 
-      # ── Clockwise rotation ─────────────────────────────────────────
+      # ── Brightness adjustment on encoder turn ─────────────────────────────
       - conditions:
           - condition: trigger
-            id: cw
+            id: encoder
+          # Ignore the unavailable / non-numeric states that can appear briefly
+          - condition: template
+            value_template: >-
+              {{ trigger.to_state.state | float(none) is not none
+                 and trigger.to_state.state != 'unavailable'
+                 and trigger.to_state.state != 'unknown' }}
         sequence:
+          - variables:
+              speed_val: "{{ trigger.to_state.state | float(0) }}"
+              abs_speed: "{{ speed_val | abs }}"
+              # −1 for CW (increase), +1 for CCW (decrease); reversed by checkbox
+              direction: "{{ (1 if reverse_rotation_val else -1) if speed_val >= 0 else (-1 if reverse_rotation_val else 1) }}"
+              brightness_step: >-
+                {% if abs_speed >= fast_threshold_val %}
+                  {{ brightness_step_fast_val }}
+                {% elif abs_speed >= slow_threshold_val %}
+                  {{ brightness_step_medium_val }}
+                {% else %}
+                  {{ brightness_step_slow_val }}
+                {% endif %}
+              hue_step: >-
+                {% if abs_speed >= fast_threshold_val %}
+                  {{ hue_step_fast_val }}
+                {% elif abs_speed >= slow_threshold_val %}
+                  {{ hue_step_medium_val }}
+                {% else %}
+                  {{ hue_step_slow_val }}
+                {% endif %}
+              mired_step: >-
+                {% if abs_speed >= fast_threshold_val %}
+                  {{ mired_step_fast_val }}
+                {% elif abs_speed >= slow_threshold_val %}
+                  {{ mired_step_medium_val }}
+                {% else %}
+                  {{ mired_step_slow_val }}
+                {% endif %}
           - choose:
 
-              # Normal: brightness up
+              # Normal mode: brightness adjustment
               - conditions:
                   - condition: template
                     value_template: "{{ states(mode_select) == 'normal' }}"
                 sequence:
+                  - variables:
+                      current_pct: >-
+                        {{ ((state_attr(light, 'brightness') | default(0) | int) / 2.55) | round(0) }}
+                      new_pct: >-
+                        {{ [1, [(current_pct | int) + (direction | int) * (brightness_step | int), 100] | min] | max }}
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
-                      brightness_pct: >-
-                        {% set cur = ((state_attr(light, 'brightness') | default(0) | int) / 2.55) | round(0) %}
-                        {{ [0, [(cur + brightness_step_value), 100] | min] | max }}
+                      brightness_pct: "{{ new_pct }}"
+                      transition: "{{ transition_time_val / 1000 }}"
 
-              # Hue: step hue CW, update knob LED to new hue colour
+              # Hue mode: cycle hue with speed-sensitive steps
               - conditions:
                   - condition: template
                     value_template: "{{ states(mode_select) == 'hue' }}"
@@ -347,7 +509,7 @@ action:
                       _hs: "{{ state_attr(light, 'hs_color') }}"
                       _cur_h: "{{ (_hs[0] if _hs else 0) | float }}"
                       _cur_s: "{{ (_hs[1] if _hs else 100) | float }}"
-                      _new_h: "{{ (_cur_h + hue_step_value) % 360 }}"
+                      _new_h: "{{ (_cur_h + (direction | int) * (hue_step | int)) % 360 }}"
                       _s_: "{{ (_cur_s / 100) | float }}"
                       _c_: "{{ _s_ }}"
                       _x_: "{{ _c_ * (1 - ((_new_h / 60) % 2 - 1) | abs) }}"
@@ -360,6 +522,7 @@ action:
                       hs_color:
                         - "{{ _new_h }}"
                         - "{{ _cur_s }}"
+                      transition: "{{ transition_time_val / 1000 }}"
                   - if:
                       - condition: template
                         value_template: "{{ feedback_light != [] }}"
@@ -378,7 +541,7 @@ action:
                     data:
                       duration: "{{ timeout_seconds_value }}"
 
-              # Color temp: CW = warmer (higher mireds), update knob LED
+              # Color temperature mode: adjust CT with speed-sensitive steps
               - conditions:
                   - condition: template
                     value_template: "{{ states(mode_select) == 'color_temp' }}"
@@ -387,107 +550,14 @@ action:
                       _min_m: "{{ state_attr(light, 'min_mireds') | default(153) | int }}"
                       _max_m: "{{ state_attr(light, 'max_mireds') | default(500) | int }}"
                       _cur_m: "{{ state_attr(light, 'color_temp') | default(300) | int }}"
-                      _new_m: "{{ [_min_m, [_max_m, (_cur_m + mired_step_value)] | min] | max }}"
+                      _new_m: "{{ [_min_m, [_max_m, (_cur_m | int) + (direction | int) * (mired_step | int)] | min] | max }}"
                       _t: "{{ [[(_new_m - _min_m) / (_max_m - _min_m), 0] | max, 1] | min }}"
                   - service: light.turn_on
                     target:
                       entity_id: !input light_entity
                     data:
                       color_temp: "{{ _new_m }}"
-                  - if:
-                      - condition: template
-                        value_template: "{{ feedback_light != [] }}"
-                    then:
-                      - service: light.turn_on
-                        target:
-                          entity_id: !input feedback_light_entity
-                        data:
-                          rgb_color:
-                            - "{{ (200 + 55 * _t) | int }}"
-                            - "{{ (220 - 73 * _t) | int }}"
-                            - "{{ (255 - 214 * _t) | int }}"
-                  - service: timer.start
-                    target:
-                      entity_id: !input exit_timer_entity
-                    data:
-                      duration: "{{ timeout_seconds_value }}"
-
-      # ── Counter-clockwise rotation ─────────────────────────────────
-      - conditions:
-          - condition: trigger
-            id: ccw
-        sequence:
-          - choose:
-
-              # Normal: brightness down
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'normal' }}"
-                sequence:
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      brightness_pct: >-
-                        {% set cur = ((state_attr(light, 'brightness') | default(0) | int) / 2.55) | round(0) %}
-                        {{ [0, [(cur - brightness_step_value), 100] | min] | max }}
-
-              # Hue: step hue CCW, update knob LED to new hue colour
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'hue' }}"
-                sequence:
-                  - variables:
-                      _hs: "{{ state_attr(light, 'hs_color') }}"
-                      _cur_h: "{{ (_hs[0] if _hs else 0) | float }}"
-                      _cur_s: "{{ (_hs[1] if _hs else 100) | float }}"
-                      _new_h: "{{ (_cur_h - hue_step_value) % 360 }}"
-                      _s_: "{{ (_cur_s / 100) | float }}"
-                      _c_: "{{ _s_ }}"
-                      _x_: "{{ _c_ * (1 - ((_new_h / 60) % 2 - 1) | abs) }}"
-                      _m_: "{{ 1.0 - _c_ }}"
-                      _i_: "{{ (_new_h | int) // 60 }}"
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      hs_color:
-                        - "{{ _new_h }}"
-                        - "{{ _cur_s }}"
-                  - if:
-                      - condition: template
-                        value_template: "{{ feedback_light != [] }}"
-                    then:
-                      - service: light.turn_on
-                        target:
-                          entity_id: !input feedback_light_entity
-                        data:
-                          rgb_color:
-                            - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
-                            - "{{ (([_x_, _c_, _c_, _x_, 0, 0][_i_ | int] + _m_) * 255) | int }}"
-                            - "{{ (([0, 0, _x_, _c_, _c_, _x_][_i_ | int] + _m_) * 255) | int }}"
-                  - service: timer.start
-                    target:
-                      entity_id: !input exit_timer_entity
-                    data:
-                      duration: "{{ timeout_seconds_value }}"
-
-              # Color temp: CCW = cooler (lower mireds), update knob LED
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states(mode_select) == 'color_temp' }}"
-                sequence:
-                  - variables:
-                      _min_m: "{{ state_attr(light, 'min_mireds') | default(153) | int }}"
-                      _max_m: "{{ state_attr(light, 'max_mireds') | default(500) | int }}"
-                      _cur_m: "{{ state_attr(light, 'color_temp') | default(300) | int }}"
-                      _new_m: "{{ [_min_m, [_max_m, (_cur_m - mired_step_value)] | min] | max }}"
-                      _t: "{{ [[(_new_m - _min_m) / (_max_m - _min_m), 0] | max, 1] | min }}"
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      color_temp: "{{ _new_m }}"
+                      transition: "{{ transition_time_val / 1000 }}"
                   - if:
                       - condition: template
                         value_template: "{{ feedback_light != [] }}"

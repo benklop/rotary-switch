@@ -1,9 +1,9 @@
 blueprint:
-  name: Rotary Encoder Speed-Sensitive Light + Fan
+  name: Rotary Encoder Speed-Sensitive RGB Color Light + Fan
   description: >
-    Controls a dimmable light and a fan with a rotary encoder.
+    Controls a dimmable/color light and a fan with a rotary encoder.
     Rotation speed is measured on the ESP32 and mapped to slow/medium/fast
-    step sizes for brightness, fan percentage, and color temperature.
+    step sizes for brightness, hue, color temperature, and fan percentage.
 
     Requires the updated rotary-lightswitch ESPHome firmware which publishes
     an "Encoder Speed" sensor (det/s, signed: + = CW, - = CCW).
@@ -11,12 +11,14 @@ blueprint:
     Behavior:
       - Single press: toggle light on/off
       - Rotate in normal mode: change brightness (speed-sensitive)
-      - Double press: toggle fan mode; rotate to change fan speed
-      - Long press: toggle color temperature mode; rotate to change CT
-      - Fan/CT mode auto-exit after inactivity timeout (reset on each rotation)
+      - Double press: enter hue mode; rotate to cycle colour; double-press again (or timeout) to exit
+      - Long press: enter color temperature mode; rotate to change CT; long-press again (or timeout) to exit
+      - Fan button: toggles between normal and fan mode; rotate to change fan speed when in fan mode
+      - All modes auto-exit after inactivity timeout (reset on each rotation)
 
     Optional knob LED feedback:
       - normal mode: off
+      - hue mode: tracks light's current hue
       - fan mode: red (off), yellow (low/medium), green (high)
       - color_temp mode: cool blue-white <-> warm amber
   domain: automation
@@ -24,7 +26,7 @@ blueprint:
   input:
     light_entity:
       name: Light
-      description: The dimmable light to control.
+      description: The dimmable/colour light to control.
       selector:
         entity:
           domain: light
@@ -40,8 +42,8 @@ blueprint:
       name: Knob LED (optional)
       description: >
         RGB light used as mode indicator.
-        Off in normal mode; red/yellow/green in fan mode;
-        cool-to-warm indication in color temperature mode.
+        Off in normal mode; tracks hue in hue mode;
+        red/yellow/green in fan mode; cool-to-warm in color_temp mode.
         Leave empty to disable LED feedback.
       default: []
       selector:
@@ -66,7 +68,7 @@ blueprint:
 
     button_double:
       name: Double-press binary sensor
-      description: Pulses ON briefly on double press. Toggles fan mode.
+      description: Pulses ON briefly on double press. Toggles hue mode.
       selector:
         entity:
           domain: binary_sensor
@@ -78,11 +80,21 @@ blueprint:
         entity:
           domain: binary_sensor
 
+    button_fan:
+      name: Fan button (optional)
+      description: >
+        Binary sensor for fan mode toggle. If provided, pressing this enters/exits fan mode
+        independently of the rotary button double-press.
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+
     mode_select_entity:
       name: Mode helper (input_select)
       description: >
         Create an input_select with exactly these options (in this order):
-        normal, fan, color_temp
+        normal, hue, fan, color_temp
       selector:
         entity:
           domain: input_select
@@ -90,14 +102,240 @@ blueprint:
     exit_timer_entity:
       name: Exit timer
       description: >
-        Timer that auto-exits fan/CT mode after inactivity.
-        Each encoder rotation while in fan/CT mode resets it.
+        Timer that auto-exits hue/fan/CT mode after inactivity.
+        Each encoder rotation while in those modes resets it.
       selector:
         entity:
           domain: timer
 
     slow_threshold:
       name: Slow / medium threshold (det/s)
+      description: Turns slower than this are classified as slow.
+      default: 3.0
+      selector:
+        number:
+          min: 0.5
+          max: 10.0
+          step: 0.5
+          unit_of_measurement: "det/s"
+
+    fast_threshold:
+      name: Medium / fast threshold (det/s)
+      description: Turns faster than this are classified as fast.
+      default: 8.0
+      selector:
+        number:
+          min: 2.0
+          max: 25.0
+          step: 0.5
+          unit_of_measurement: "det/s"
+
+    brightness_step_slow:
+      name: Brightness slow step (% per detent)
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 15
+          step: 1
+          unit_of_measurement: "%"
+
+    brightness_step_medium:
+      name: Brightness medium step (% per detent)
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: "%"
+
+    brightness_step_fast:
+      name: Brightness fast step (% per detent)
+      default: 25
+      selector:
+        number:
+          min: 5
+          max: 50
+          step: 1
+          unit_of_measurement: "%"
+
+    hue_step_slow:
+      name: Hue slow step (degrees per detent)
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: "°"
+
+    hue_step_medium:
+      name: Hue medium step (degrees per detent)
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 1
+          unit_of_measurement: "°"
+
+    hue_step_fast:
+      name: Hue fast step (degrees per detent)
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 60
+          step: 1
+          unit_of_measurement: "°"
+
+    fan_step_slow:
+      name: Fan slow step (% per detent)
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+          unit_of_measurement: "%"
+
+    fan_step_medium:
+      name: Fan medium step (% per detent)
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 40
+          step: 1
+          unit_of_measurement: "%"
+
+    fan_step_fast:
+      name: Fan fast step (% per detent)
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 60
+          step: 1
+          unit_of_measurement: "%"
+
+    mired_step_slow:
+      name: Color temp slow step (mireds)
+      default: 10
+      selector:
+        number:
+          min: 5
+          max: 50
+          step: 5
+
+    mired_step_medium:
+      name: Color temp medium step (mireds)
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 75
+          step: 5
+
+    mired_step_fast:
+      name: Color temp fast step (mireds)
+      default: 35
+      selector:
+        number:
+          min: 10
+          max: 100
+          step: 5
+
+    timeout_seconds:
+      name: Hue / Fan / CT mode timeout (seconds)
+      description: Return to normal mode after this many inactive seconds.
+      default: 30
+      selector:
+        number:
+          min: 10
+          max: 120
+          step: 5
+          unit_of_measurement: s
+
+    reverse_rotation:
+      name: Reverse rotation direction
+      description: >-
+        Check to swap increase/decrease direction. Use this if your encoder is
+        wired so clockwise turns decrease values.
+      default: false
+      selector:
+        boolean:
+
+    transition_time:
+      name: Transition time (ms)
+      description: Transition for brightness, hue, and color temperature changes.
+      default: 50
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: 50
+          unit_of_measurement: ms
+
+variables:
+  light: !input light_entity
+  fan: !input fan_entity
+  feedback_light: !input feedback_light_entity
+  button_fan: !input button_fan
+  mode_select: !input mode_select_entity
+  slow_threshold_val: !input slow_threshold
+  fast_threshold_val: !input fast_threshold
+  brightness_step_slow_val: !input brightness_step_slow
+  brightness_step_medium_val: !input brightness_step_medium
+  brightness_step_fast_val: !input brightness_step_fast
+  hue_step_slow_val: !input hue_step_slow
+  hue_step_medium_val: !input hue_step_medium
+  hue_step_fast_val: !input hue_step_fast
+  fan_step_slow_val: !input fan_step_slow
+  fan_step_medium_val: !input fan_step_medium
+  fan_step_fast_val: !input fan_step_fast
+  mired_step_slow_val: !input mired_step_slow
+  mired_step_medium_val: !input mired_step_medium
+  mired_step_fast_val: !input mired_step_fast
+  timeout_seconds_value: !input timeout_seconds
+  reverse_rotation_val: !input reverse_rotation
+  transition_time_val: !input transition_time
+
+trigger:
+  - id: encoder
+    platform: state
+    entity_id: !input encoder_speed_entity
+
+  - id: button_single
+    platform: state
+    entity_id: !input button_single
+    from: "off"
+    to: "on"
+
+  - id: button_double
+    platform: state
+    entity_id: !input button_double
+    from: "off"
+    to: "on"
+
+  - id: button_long
+    platform: state
+    entity_id: !input button_long
+    from: "off"
+    to: "on"
+
+  - id: button_fan_toggle
+    platform: state
+    entity_id: !input button_fan
+    from: "off"
+    to: "on"
+
+  - id: timer_finished
+    platform: state
+    entity_id: !input exit_timer_entity
+    from: "active"
+    to: "idle"
       description: Turns slower than this are classified as slow.
       default: 3.0
       selector:
