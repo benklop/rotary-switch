@@ -74,7 +74,7 @@ select:
     set_action:
       - if:
           condition:
-            lambda: return id(rotary_mode).state == "hue";
+            lambda: return id(rotary_mode).current_option() == "hue";
           then:
             - script.execute: mode_idle_arm
 
@@ -96,7 +96,7 @@ script:
       - if:
           condition:
             lambda: |-
-              auto m = id(rotary_mode).state;
+              auto m = id(rotary_mode).current_option();
               return m == "hue" || m == "color_temp" || m == "fan";
           then:
             - script.execute: mode_idle_arm
