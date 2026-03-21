@@ -8,6 +8,10 @@ blueprint:
     Requires the updated rotary-lightswitch ESPHome firmware which publishes
     an "Encoder Speed" sensor (det/s, signed: + = CW, − = CCW).
 
+    Pick the ESPHome **device** once; encoder, button, and knob LED entities are
+    resolved from the device registry (names: Encoder Speed, Button Single/Double/Long,
+    Knob LED — default ESPHome object_ids: *_encoder_speed, *_button_*, *_knob_led).
+
     Behavior:
       - Single press:  toggle light on/off (in normal and CT mode); in hue mode, toggles between
         saturation adjust and hue adjust (does not toggle the light).
@@ -30,48 +34,22 @@ blueprint:
         entity:
           domain: light
 
-    feedback_light_entity:
-      name: Knob LED (optional)
+    rotary_device:
+      name: Rotary switch (ESPHome device)
       description: >
-        RGB-only indicator (e.g. ESPHome "Knob LED") — no white or CT channel.
-        Off in normal mode when the room light is on or the sun is up; soft orange at night when the main
-        light is off (normal mode only); in hue mode mirrors the main light via computed RGB;
-        in CT mode shows warm↔cool using RGB only (approximate white balance, not a CT command).
-        Leave empty to disable LED feedback entirely.
-      default: []
+        The ESPHome device for this knob (e.g. "Living Room Dimmer"). All encoder and
+        button entities plus the Knob LED are picked up from this device automatically.
       selector:
-        entity:
-          domain: light
+        device:
 
-    encoder_speed_entity:
-      name: Encoder Speed sensor
+    use_knob_led_feedback:
+      name: Use Knob LED on device
       description: >
-        The "Encoder Speed" sensor from the ESPHome device. Publishes a signed
-        float (det/s) on every detent: positive = clockwise, negative = CCW.
+        When enabled, drives the device's RGB Knob LED (entity id ending in _knob_led)
+        for night glow, hue/CT indication, etc. Disable if you removed the LED or want no feedback.
+      default: true
       selector:
-        entity:
-          domain: sensor
-
-    button_single:
-      name: Single-press binary sensor
-      description: Pulses on a single press (e.g. "Button Single").
-      selector:
-        entity:
-          domain: binary_sensor
-
-    button_double:
-      name: Double-press binary sensor
-      description: Pulses on a double press (e.g. "Button Double") — enters/exits hue mode.
-      selector:
-        entity:
-          domain: binary_sensor
-
-    button_long:
-      name: Long-press binary sensor
-      description: Pulses on a long press (e.g. "Button Long") — enters/exits CT mode.
-      selector:
-        entity:
-          domain: binary_sensor
+        boolean:
 
     mode_select_entity:
       name: Mode helper (input_select)
@@ -320,9 +298,19 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
 
+trigger_variables:
+  rotary_device_id: !input rotary_device
+
 variables:
   light: !input light_entity
-  feedback_light: !input feedback_light_entity
+  rotary_device_id: !input rotary_device
+  _de: "{{ device_entities(rotary_device_id) }}"
+  encoder_speed_eid: "{{ _de | select('match', '^sensor\\..*_encoder_speed$') | list | first | default('') }}"
+  button_single_eid: "{{ _de | select('match', '^binary_sensor\\..*_button_single$') | list | first | default('') }}"
+  button_double_eid: "{{ _de | select('match', '^binary_sensor\\..*_button_double$') | list | first | default('') }}"
+  button_long_eid: "{{ _de | select('match', '^binary_sensor\\..*_button_long$') | list | first | default('') }}"
+  knob_led_eid: "{{ _de | select('match', '^light\\..*_knob_led$') | list | first | default('') }}"
+  use_knob_led: !input use_knob_led_feedback
   mode_select: !input mode_select_entity
   slow_threshold_val: !input slow_threshold
   fast_threshold_val: !input fast_threshold
@@ -353,26 +341,28 @@ trigger:
       - !input light_entity
 
   - id: encoder
-    platform: state
-    entity_id: !input encoder_speed_entity
+    platform: event
+    event_type: state_changed
+    event_data:
+      entity_id: "{{ device_entities(rotary_device_id) | select('match', '^sensor\\..*_encoder_speed$') | list | first }}"
 
   - id: button_single
-    platform: state
-    entity_id: !input button_single
-    from: "off"
-    to: "on"
+    platform: event
+    event_type: state_changed
+    event_data:
+      entity_id: "{{ device_entities(rotary_device_id) | select('match', '^binary_sensor\\..*_button_single$') | list | first }}"
 
   - id: button_double
-    platform: state
-    entity_id: !input button_double
-    from: "off"
-    to: "on"
+    platform: event
+    event_type: state_changed
+    event_data:
+      entity_id: "{{ device_entities(rotary_device_id) | select('match', '^binary_sensor\\..*_button_double$') | list | first }}"
 
   - id: button_long
-    platform: state
-    entity_id: !input button_long
-    from: "off"
-    to: "on"
+    platform: event
+    event_type: state_changed
+    event_data:
+      entity_id: "{{ device_entities(rotary_device_id) | select('match', '^binary_sensor\\..*_button_long$') | list | first }}"
 
   - id: timer_finished
     platform: state
@@ -390,7 +380,7 @@ action:
         sequence:
           - if:
               - condition: template
-                value_template: "{{ feedback_light != [] }}"
+                value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
             then:
               - choose:
                   - conditions:
@@ -401,7 +391,7 @@ action:
                     sequence:
                       - service: light.turn_on
                         target:
-                          entity_id: !input feedback_light_entity
+                          entity_id: "{{ knob_led_eid }}"
                         data:
                           brightness_pct: "{{ night_light_brightness_pct_val }}"
                           rgb_color: [255, 72, 12]
@@ -411,7 +401,7 @@ action:
                     sequence:
                       - service: light.turn_off
                         target:
-                          entity_id: !input feedback_light_entity
+                          entity_id: "{{ knob_led_eid }}"
 
       # ── Timer expired → return to normal ──────────────────────────
       - conditions:
@@ -430,7 +420,7 @@ action:
               option: saturation
           - if:
               - condition: template
-                value_template: "{{ feedback_light != [] }}"
+                value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
             then:
               - choose:
                   - conditions:
@@ -441,19 +431,25 @@ action:
                     sequence:
                       - service: light.turn_on
                         target:
-                          entity_id: !input feedback_light_entity
+                          entity_id: "{{ knob_led_eid }}"
                         data:
                           brightness_pct: "{{ night_light_brightness_pct_val }}"
                           rgb_color: [255, 72, 12]
                 default:
                   - service: light.turn_off
                     target:
-                      entity_id: !input feedback_light_entity
+                      entity_id: "{{ knob_led_eid }}"
 
       # ── Single press: toggle light, or in hue mode flip sat ↔ hue ──
       - conditions:
           - condition: trigger
             id: button_single
+          - condition: template
+            value_template: >-
+              {% set o = trigger.event.data.old_state %}
+              {% set n = trigger.event.data.new_state %}
+              {{ (o is none or o.state in ['off', 'unavailable', 'unknown'])
+                 and n is not none and n.state == 'on' }}
         sequence:
           - choose:
               - conditions:
@@ -489,7 +485,7 @@ action:
                   entity_id: !input light_entity
               - if:
                   - condition: template
-                    value_template: "{{ feedback_light != [] }}"
+                    value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                 then:
                   - choose:
                       - conditions:
@@ -500,20 +496,26 @@ action:
                         sequence:
                           - service: light.turn_on
                             target:
-                              entity_id: !input feedback_light_entity
+                              entity_id: "{{ knob_led_eid }}"
                             data:
                               brightness_pct: "{{ night_light_brightness_pct_val }}"
                               rgb_color: [255, 72, 12]
                     default:
                       - service: light.turn_off
                         target:
-                          entity_id: !input feedback_light_entity
+                          entity_id: "{{ knob_led_eid }}"
 
       # ── Double press: toggle hue mode ──────────────────────────────
       # Press while in hue mode → exit; press from any other mode → enter hue mode.
       - conditions:
           - condition: trigger
             id: button_double
+          - condition: template
+            value_template: >-
+              {% set o = trigger.event.data.old_state %}
+              {% set n = trigger.event.data.new_state %}
+              {{ (o is none or o.state in ['off', 'unavailable', 'unknown'])
+                 and n is not none and n.state == 'on' }}
         sequence:
           - choose:
               - conditions:
@@ -535,7 +537,7 @@ action:
                       entity_id: !input exit_timer_entity
                   - if:
                       - condition: template
-                        value_template: "{{ feedback_light != [] }}"
+                        value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                     then:
                       - choose:
                           - conditions:
@@ -546,14 +548,14 @@ action:
                             sequence:
                               - service: light.turn_on
                                 target:
-                                  entity_id: !input feedback_light_entity
+                                  entity_id: "{{ knob_led_eid }}"
                                 data:
                                   brightness_pct: "{{ night_light_brightness_pct_val }}"
                                   rgb_color: [255, 72, 12]
                         default:
                           - service: light.turn_off
                             target:
-                              entity_id: !input feedback_light_entity
+                              entity_id: "{{ knob_led_eid }}"
             default:
               - service: input_select.select_option
                 target:
@@ -573,7 +575,7 @@ action:
               # Set knob LED to the current hue of the controlled light
               - if:
                   - condition: template
-                    value_template: "{{ feedback_light != [] }}"
+                    value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                 then:
                   - variables:
                       _hs: "{{ state_attr(light, 'hs_color') }}"
@@ -585,7 +587,7 @@ action:
                       _i: "{{ (_h | int) // 60 }}"
                   - service: light.turn_on
                     target:
-                      entity_id: !input feedback_light_entity
+                      entity_id: "{{ knob_led_eid }}"
                     data:
                       rgb_color:
                         - "{{ (([_c, _x, 0, 0, _x, _c][_i | int] + _m) * 255) | int }}"
@@ -597,6 +599,12 @@ action:
       - conditions:
           - condition: trigger
             id: button_long
+          - condition: template
+            value_template: >-
+              {% set o = trigger.event.data.old_state %}
+              {% set n = trigger.event.data.new_state %}
+              {{ (o is none or o.state in ['off', 'unavailable', 'unknown'])
+                 and n is not none and n.state == 'on' }}
         sequence:
           - choose:
               - conditions:
@@ -613,7 +621,7 @@ action:
                       entity_id: !input exit_timer_entity
                   - if:
                       - condition: template
-                        value_template: "{{ feedback_light != [] }}"
+                        value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                     then:
                       - choose:
                           - conditions:
@@ -624,14 +632,14 @@ action:
                             sequence:
                               - service: light.turn_on
                                 target:
-                                  entity_id: !input feedback_light_entity
+                                  entity_id: "{{ knob_led_eid }}"
                                 data:
                                   brightness_pct: "{{ night_light_brightness_pct_val }}"
                                   rgb_color: [255, 72, 12]
                         default:
                           - service: light.turn_off
                             target:
-                              entity_id: !input feedback_light_entity
+                              entity_id: "{{ knob_led_eid }}"
             default:
               - service: input_select.select_option
                 target:
@@ -646,7 +654,7 @@ action:
               # Knob LED (RGB only): proxy warm↔cool; _t=0 warm low-K, _t=1 cool high-K
               - if:
                   - condition: template
-                    value_template: "{{ feedback_light != [] }}"
+                    value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                 then:
                   - variables:
                       _min_k: >-
@@ -684,7 +692,7 @@ action:
                       _b: "{{ (255 - 214 * (1 - (_t | float))) | int }}"
                   - service: light.turn_on
                     target:
-                      entity_id: !input feedback_light_entity
+                      entity_id: "{{ knob_led_eid }}"
                     data:
                       brightness_pct: 85
                       rgb_color:
@@ -699,12 +707,12 @@ action:
           # Ignore the unavailable / non-numeric states that can appear briefly
           - condition: template
             value_template: >-
-              {{ trigger.to_state.state | float(none) is not none
-                 and trigger.to_state.state != 'unavailable'
-                 and trigger.to_state.state != 'unknown' }}
+              {{ trigger.event.data.new_state.state | float(none) is not none
+                 and trigger.event.data.new_state.state != 'unavailable'
+                 and trigger.event.data.new_state.state != 'unknown' }}
         sequence:
           - variables:
-              speed_val: "{{ trigger.to_state.state | float(0) }}"
+              speed_val: "{{ trigger.event.data.new_state.state | float(0) }}"
               abs_speed: "{{ speed_val | abs }}"
               # −1 for CW (increase), +1 for CCW (decrease); reversed by checkbox
               direction: "{{ (1 if reverse_rotation_val else -1) if speed_val >= 0 else (-1 if reverse_rotation_val else 1) }}"
@@ -790,11 +798,11 @@ action:
                               transition: "{{ transition_time_val / 1000 }}"
                           - if:
                               - condition: template
-                                value_template: "{{ feedback_light != [] }}"
+                                value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                             then:
                               - service: light.turn_on
                                 target:
-                                  entity_id: !input feedback_light_entity
+                                  entity_id: "{{ knob_led_eid }}"
                                 data:
                                   rgb_color:
                                     - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
@@ -830,11 +838,11 @@ action:
                               transition: "{{ transition_time_val / 1000 }}"
                           - if:
                               - condition: template
-                                value_template: "{{ feedback_light != [] }}"
+                                value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                             then:
                               - service: light.turn_on
                                 target:
-                                  entity_id: !input feedback_light_entity
+                                  entity_id: "{{ knob_led_eid }}"
                                 data:
                                   rgb_color:
                                     - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
@@ -893,11 +901,11 @@ action:
                       transition: "{{ transition_time_val / 1000 }}"
                   - if:
                       - condition: template
-                        value_template: "{{ feedback_light != [] }}"
+                        value_template: "{{ use_knob_led and (knob_led_eid | length > 0) }}"
                     then:
                       - service: light.turn_on
                         target:
-                          entity_id: !input feedback_light_entity
+                          entity_id: "{{ knob_led_eid }}"
                         data:
                           brightness_pct: 85
                           rgb_color:

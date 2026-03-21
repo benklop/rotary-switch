@@ -19,7 +19,9 @@ Use these blueprints with the ESPHome rotary-lightswitch device to control a dim
    - **Input select (hue sub-mode)**: Options `saturation`, `hue` (e.g. “Rotary hue adjust”).
    - **Timer**: e.g. 30 s for hue/CT exit after inactivity.
 
-2. **Import** `rotary_dimmer_rgb.yaml` and create the automation: light, optional knob LED, Encoder Speed sensor, button sensors (single/double/long), **both** input_select helpers, timer, and **Kelvin** CT step inputs (replacing the old mired-based steps if you upgrade an existing automation — re-open the automation and save after blueprint refresh).
+2. **Import** `rotary_dimmer_rgb.yaml` and create the automation: **light**, the ESPHome **rotary device** (one picker), optional “use Knob LED”, **both** input_select helpers, timer, and **Kelvin** CT step inputs. Encoder Speed, Button Single/Double/Long, and Knob LED are taken from the device (entity ids must end with `_encoder_speed`, `_button_single` / `_button_double` / `_button_long`, `_knob_led` — default for this repo’s firmware).
+
+   If you upgrade from an older blueprint version, **delete and re-create** the automation (or re-import the blueprint and save) so inputs match the new schema.
 
 ### Behavior
 
@@ -45,7 +47,9 @@ Same **RGB** and **Kelvin CT** behaviour as `rotary_dimmer_rgb.yaml` (saturation
 
 2. **Import** `rotary_dimmer_rgb_with_fan.yaml`.
 
-3. **Create automation from blueprint**: Select the **light**, **fan**, optional **knob LED**, **Encoder Speed** sensor, button binary sensors (single/double/long), optional **fan button** sensor, **both** mode and hue sub-mode input_selects, exit timer, and Kelvin CT steps.
+3. **Create automation from blueprint**: **Light**, **fan**, ESPHome **rotary device**, optional **fan button** binary sensor (only if you use a separate control for fan mode), optional “use Knob LED”, **both** mode and hue sub-mode input_selects, exit timer, and Kelvin CT steps. Encoder/button/Knob LED entities are resolved from the rotary device as in the RGB-only blueprint.
+
+   Re-create the automation after a blueprint upgrade if inputs no longer match.
 
 ### Behavior
 
