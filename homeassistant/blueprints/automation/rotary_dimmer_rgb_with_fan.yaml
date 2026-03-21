@@ -20,8 +20,9 @@ blueprint:
         uses approximate warm↔cool RGB only.
       - Timer resets on rotation and on single-press in hue mode (sub-mode toggle).
 
-    Optional knob LED: off in normal; mirrors HS→RGB in hue mode; red/yellow/green in fan mode;
-    CT proxy in colour-temperature mode.
+    Optional knob LED: off in normal when the room light is on or the sun is up; soft orange night glow
+    when the main light is off after sunset (normal mode only); mirrors HS→RGB in hue mode;
+    red/yellow/green in fan mode; CT proxy in colour-temperature mode.
   domain: automation
 
   input:
@@ -43,7 +44,8 @@ blueprint:
       name: Knob LED (optional)
       description: >
         RGB-only indicator — no white or CT channel.
-        Off in normal mode; mirrors the main light in hue mode; red/yellow/green in fan mode;
+        Off in normal mode when the room light is on or the sun is up; soft orange at night when the main
+        light is off (normal mode only); mirrors the main light in hue mode; red/yellow/green in fan mode;
         warm↔cool RGB proxy in CT mode (main light still uses color_temp_kelvin).
         Leave empty to disable LED feedback.
       default: []
@@ -339,6 +341,27 @@ blueprint:
           step: 5
           unit_of_measurement: s
 
+    enable_knob_night_light:
+      name: Knob night light
+      description: >
+        When the main light is off, the sun is below the horizon, and the encoder is in normal mode
+        (not hue, fan, or colour-temperature mode), glow the knob LED soft orange so you can find the switch.
+        Requires the Sun integration (sun.sun).
+      default: true
+      selector:
+        boolean:
+
+    night_light_brightness_pct:
+      name: Night light brightness (%)
+      description: Brightness for the soft orange night glow (main light must be off).
+      default: 14
+      selector:
+        number:
+          min: 1
+          max: 40
+          step: 1
+          unit_of_measurement: "%"
+
 variables:
   light: !input light_entity
   fan: !input fan_entity
@@ -366,8 +389,16 @@ variables:
   reverse_rotation_val: !input reverse_rotation
   transition_time_val: !input transition_time
   timeout_seconds_value: !input timeout_seconds
+  enable_knob_night_light_val: !input enable_knob_night_light
+  night_light_brightness_pct_val: !input night_light_brightness_pct
 
 trigger:
+  - id: knob_night_sync
+    platform: state
+    entity_id:
+      - sun.sun
+      - !input light_entity
+
   - id: encoder
     platform: state
     entity_id: !input encoder_speed_entity
@@ -407,6 +438,35 @@ action:
 
       - conditions:
           - condition: trigger
+            id: knob_night_sync
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ feedback_light != [] }}"
+            then:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: >
+                          {{ enable_knob_night_light_val and states(mode_select) == 'normal'
+                             and is_state(light, 'off') and is_state('sun.sun', 'below_horizon') }}
+                    sequence:
+                      - service: light.turn_on
+                        target:
+                          entity_id: !input feedback_light_entity
+                        data:
+                          brightness_pct: "{{ night_light_brightness_pct_val }}"
+                          rgb_color: [255, 72, 12]
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ states(mode_select) == 'normal' }}"
+                    sequence:
+                      - service: light.turn_off
+                        target:
+                          entity_id: !input feedback_light_entity
+
+      - conditions:
+          - condition: trigger
             id: timer_finished
         sequence:
           - service: input_select.select_option
@@ -423,9 +483,23 @@ action:
               - condition: template
                 value_template: "{{ feedback_light != [] }}"
             then:
-              - service: light.turn_off
-                target:
-                  entity_id: !input feedback_light_entity
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: >
+                          {{ enable_knob_night_light_val and is_state(light, 'off')
+                             and is_state('sun.sun', 'below_horizon') }}
+                    sequence:
+                      - service: light.turn_on
+                        target:
+                          entity_id: !input feedback_light_entity
+                        data:
+                          brightness_pct: "{{ night_light_brightness_pct_val }}"
+                          rgb_color: [255, 72, 12]
+                default:
+                  - service: light.turn_off
+                    target:
+                      entity_id: !input feedback_light_entity
 
       - conditions:
           - condition: trigger
@@ -458,9 +532,32 @@ action:
                     data:
                       duration: "{{ timeout_seconds_value }}"
             default:
+              - variables:
+                  light_was_on: "{{ is_state(light, 'on') }}"
               - service: light.toggle
                 target:
                   entity_id: !input light_entity
+              - if:
+                  - condition: template
+                    value_template: "{{ feedback_light != [] }}"
+                then:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: >
+                              {{ light_was_on and enable_knob_night_light_val
+                                 and is_state('sun.sun', 'below_horizon') }}
+                        sequence:
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input feedback_light_entity
+                            data:
+                              brightness_pct: "{{ night_light_brightness_pct_val }}"
+                              rgb_color: [255, 72, 12]
+                    default:
+                      - service: light.turn_off
+                        target:
+                          entity_id: !input feedback_light_entity
 
       - conditions:
           - condition: trigger
@@ -485,9 +582,23 @@ action:
                       - condition: template
                         value_template: "{{ feedback_light != [] }}"
                     then:
-                      - service: light.turn_off
-                        target:
-                          entity_id: !input feedback_light_entity
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: >
+                                  {{ enable_knob_night_light_val and is_state(light, 'off')
+                                     and is_state('sun.sun', 'below_horizon') }}
+                            sequence:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: !input feedback_light_entity
+                                data:
+                                  brightness_pct: "{{ night_light_brightness_pct_val }}"
+                                  rgb_color: [255, 72, 12]
+                        default:
+                          - service: light.turn_off
+                            target:
+                              entity_id: !input feedback_light_entity
             default:
               - service: input_select.select_option
                 target:
@@ -562,9 +673,23 @@ action:
                               - condition: template
                                 value_template: "{{ feedback_light != [] }}"
                             then:
-                              - service: light.turn_off
-                                target:
-                                  entity_id: !input feedback_light_entity
+                              - choose:
+                                  - conditions:
+                                      - condition: template
+                                        value_template: >
+                                          {{ enable_knob_night_light_val and is_state(light, 'off')
+                                             and is_state('sun.sun', 'below_horizon') }}
+                                    sequence:
+                                      - service: light.turn_on
+                                        target:
+                                          entity_id: !input feedback_light_entity
+                                        data:
+                                          brightness_pct: "{{ night_light_brightness_pct_val }}"
+                                          rgb_color: [255, 72, 12]
+                                default:
+                                  - service: light.turn_off
+                                    target:
+                                      entity_id: !input feedback_light_entity
                       - conditions:
                           - condition: template
                             value_template: "{{ states(mode_select) == 'fan' }}"
@@ -581,9 +706,23 @@ action:
                               - condition: template
                                 value_template: "{{ feedback_light != [] }}"
                             then:
-                              - service: light.turn_off
-                                target:
-                                  entity_id: !input feedback_light_entity
+                              - choose:
+                                  - conditions:
+                                      - condition: template
+                                        value_template: >
+                                          {{ enable_knob_night_light_val and is_state(light, 'off')
+                                             and is_state('sun.sun', 'below_horizon') }}
+                                    sequence:
+                                      - service: light.turn_on
+                                        target:
+                                          entity_id: !input feedback_light_entity
+                                        data:
+                                          brightness_pct: "{{ night_light_brightness_pct_val }}"
+                                          rgb_color: [255, 72, 12]
+                                default:
+                                  - service: light.turn_off
+                                    target:
+                                      entity_id: !input feedback_light_entity
                     default:
                       - service: input_select.select_option
                         target:
@@ -638,9 +777,23 @@ action:
                           - condition: template
                             value_template: "{{ feedback_light != [] }}"
                         then:
-                          - service: light.turn_off
-                            target:
-                              entity_id: !input feedback_light_entity
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: >
+                                      {{ enable_knob_night_light_val and is_state(light, 'off')
+                                         and is_state('sun.sun', 'below_horizon') }}
+                                sequence:
+                                  - service: light.turn_on
+                                    target:
+                                      entity_id: !input feedback_light_entity
+                                    data:
+                                      brightness_pct: "{{ night_light_brightness_pct_val }}"
+                                      rgb_color: [255, 72, 12]
+                            default:
+                              - service: light.turn_off
+                                target:
+                                  entity_id: !input feedback_light_entity
                 default:
                   - service: input_select.select_option
                     target:
@@ -705,9 +858,23 @@ action:
                       - condition: template
                         value_template: "{{ feedback_light != [] }}"
                     then:
-                      - service: light.turn_off
-                        target:
-                          entity_id: !input feedback_light_entity
+                      - choose:
+                          - conditions:
+                              - condition: template
+                                value_template: >
+                                  {{ enable_knob_night_light_val and is_state(light, 'off')
+                                     and is_state('sun.sun', 'below_horizon') }}
+                            sequence:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: !input feedback_light_entity
+                                data:
+                                  brightness_pct: "{{ night_light_brightness_pct_val }}"
+                                  rgb_color: [255, 72, 12]
+                        default:
+                          - service: light.turn_off
+                            target:
+                              entity_id: !input feedback_light_entity
             default:
               - service: input_select.select_option
                 target:
