@@ -31,6 +31,10 @@ Lights that don't support color or color temperature will only respond to toggle
 
 Uses the ESPHome **Encoder Speed** sensor (same idea as `rotary_dimmer_light.yaml`, but speed-sensitive steps). **Hue mode** starts in **saturation** control so whites gain visible colour before you adjust hue; **single-press** in hue mode toggles between saturation and hue (it does **not** toggle the light).
 
+**Colour temperature** uses `light.turn_on` **`color_temp_kelvin`** on the **main light**, with **Kelvin** step sizes. The **knob LED** is **RGB-only** (no CT channel): CT mode is shown with **approximate warm↔cool RGB**, not `color_temp` on that entity.
+
+**Long press**: Flash the rotary firmware from this repo so **Button Long** fires about **500 ms after press while you are still holding** (not on release). That way the automation (and knob LED) enter CT mode as soon as the hold is recognized.
+
 ### Setup
 
 1. **Helpers**:
@@ -38,7 +42,7 @@ Uses the ESPHome **Encoder Speed** sensor (same idea as `rotary_dimmer_light.yam
    - **Input select (hue sub-mode)**: Options `saturation`, `hue` (e.g. “Rotary hue adjust”).
    - **Timer**: e.g. 30 s for hue/CT exit after inactivity.
 
-2. **Import** `rotary_dimmer_rgb.yaml` and create the automation: light, optional knob LED, Encoder Speed sensor, button sensors (single/double/long), **both** input_select helpers, and timer.
+2. **Import** `rotary_dimmer_rgb.yaml` and create the automation: light, optional knob LED, Encoder Speed sensor, button sensors (single/double/long), **both** input_select helpers, timer, and **Kelvin** CT step inputs (replacing the old mired-based steps if you upgrade an existing automation — re-open the automation and save after blueprint refresh).
 
 ### Behavior
 
