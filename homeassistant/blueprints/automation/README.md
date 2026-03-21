@@ -27,6 +27,28 @@ Lights that don't support color or color temperature will only respond to toggle
 
 ---
 
+## Blueprint: `rotary_dimmer_rgb.yaml` (speed-sensitive light + hue + color temp)
+
+Uses the ESPHome **Encoder Speed** sensor (same idea as `rotary_dimmer_light.yaml`, but speed-sensitive steps). **Hue mode** starts in **saturation** control so whites gain visible colour before you adjust hue; **single-press** in hue mode toggles between saturation and hue (it does **not** toggle the light).
+
+### Setup
+
+1. **Helpers**:
+   - **Input select (mode)**: Options `normal`, `hue`, `color_temp`.
+   - **Input select (hue sub-mode)**: Options `saturation`, `hue` (e.g. “Rotary hue adjust”).
+   - **Timer**: e.g. 30 s for hue/CT exit after inactivity.
+
+2. **Import** `rotary_dimmer_rgb.yaml` and create the automation: light, optional knob LED, Encoder Speed sensor, button sensors (single/double/long), **both** input_select helpers, and timer.
+
+### Behavior
+
+- **Single press**: Toggle light in normal and CT mode; in hue mode, switch between saturation adjust and hue adjust.
+- **Double press**: Enter/exit hue mode (sub-mode resets to saturation when entering or leaving).
+- **Long press**: Enter/exit color temperature mode.
+- **Rotate**: Speed-sensitive brightness, saturation, hue, or CT depending on mode and hue sub-mode.
+
+---
+
 ## Blueprint: `rotary_dimmer_light_with_fan.yaml` (light + fan + color temp)
 
 Alternate version: **double-press** switches to **fan speed** control instead of hue. It takes **4 detents** to move between each fan speed (off → low → medium → high). The **feedback light** (e.g. knob LED) shows **red** (off), **yellow** (low/medium), **green** (max) when you change speed.

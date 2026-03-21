@@ -9,13 +9,15 @@ blueprint:
     an "Encoder Speed" sensor (det/s, signed: + = CW, − = CCW).
 
     Behavior:
-      - Single press:  toggle light on/off
+      - Single press:  toggle light on/off (in normal and CT mode); in hue mode, toggles between
+        saturation adjust and hue adjust (does not toggle the light).
       - Rotate (normal mode): dim / brighten (speed-sensitive)
-      - Double press:  enter hue mode; rotate to cycle colour; double-press again (or timeout) to exit
+      - Double press:  enter hue mode; rotate adjusts saturation first (visible colour even from white);
+        single-press switches to hue-angle adjust and back; double-press again (or timeout) to exit
       - Long press:    enter colour-temperature mode; rotate to change CT; long-press again (or timeout) to exit
-      - Knob LED (optional): off in normal mode, mirrors the light's current hue in hue mode,
+      - Knob LED (optional): off in normal mode, mirrors the light's current colour in hue mode,
         and shifts between warm amber and cool blue in CT mode.
-      - The timer resets on every rotation so the mode only exits after a period of inactivity.
+      - The timer resets on every rotation and when single-pressing in hue mode (sub-mode toggle).
   domain: automation
 
   input:
@@ -30,7 +32,7 @@ blueprint:
       name: Knob LED (optional)
       description: >
         RGB light used as mode indicator (e.g. the ESPHome "Knob LED").
-        Off in normal mode; tracks light hue in hue mode;
+        Off in normal mode; mirrors the light's HS colour in hue mode;
         shows warm (amber) ↔ cool (blue-white) in CT mode.
         Leave empty to disable LED feedback entirely.
       default: []
@@ -73,6 +75,16 @@ blueprint:
       description: >
         Create an input_select with exactly these three options (in this order):
         normal, hue, color_temp
+      selector:
+        entity:
+          domain: input_select
+
+    hue_submode_entity:
+      name: Hue sub-mode helper (input_select)
+      description: >
+        While in hue mode, whether the knob changes saturation or hue angle.
+        Create an input_select with exactly these two options: saturation, hue
+        (order does not matter). Reset automatically when entering hue mode and when leaving it.
       selector:
         entity:
           domain: input_select
@@ -179,6 +191,40 @@ blueprint:
           step: 1
           unit_of_measurement: "°"
 
+    # ── Saturation step sizes (hue mode, saturation sub-mode) ────────────────
+    saturation_step_slow:
+      name: Saturation slow step (% per detent)
+      description: Saturation change per detent (0–100) for a slow turn in hue mode.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 25
+          step: 1
+          unit_of_measurement: "%"
+
+    saturation_step_medium:
+      name: Saturation medium step (% per detent)
+      description: Saturation change per detent at a comfortable sweep speed.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 40
+          step: 1
+          unit_of_measurement: "%"
+
+    saturation_step_fast:
+      name: Saturation fast step (% per detent)
+      description: Saturation change per detent when spinning quickly.
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 50
+          step: 1
+          unit_of_measurement: "%"
+
     # ── Color temperature step sizes ────────────────────────────────────────
     mired_step_slow:
       name: Colour temperature slow step (mireds)
@@ -258,6 +304,10 @@ variables:
   hue_step_slow_val: !input hue_step_slow
   hue_step_medium_val: !input hue_step_medium
   hue_step_fast_val: !input hue_step_fast
+  hue_submode: !input hue_submode_entity
+  saturation_step_slow_val: !input saturation_step_slow
+  saturation_step_medium_val: !input saturation_step_medium
+  saturation_step_fast_val: !input saturation_step_fast
   mired_step_slow_val: !input mired_step_slow
   mired_step_medium_val: !input mired_step_medium
   mired_step_fast_val: !input mired_step_fast
@@ -307,6 +357,11 @@ action:
               entity_id: !input mode_select_entity
             data:
               option: normal
+          - service: input_select.select_option
+            target:
+              entity_id: !input hue_submode_entity
+            data:
+              option: saturation
           - if:
               - condition: template
                 value_template: "{{ feedback_light != [] }}"
@@ -315,14 +370,41 @@ action:
                 target:
                   entity_id: !input feedback_light_entity
 
-      # ── Single press: toggle light ─────────────────────────────────
+      # ── Single press: toggle light, or in hue mode flip sat ↔ hue ──
       - conditions:
           - condition: trigger
             id: button_single
         sequence:
-          - service: light.toggle
-            target:
-              entity_id: !input light_entity
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mode_select) == 'hue' }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(hue_submode) == 'saturation' }}"
+                        sequence:
+                          - service: input_select.select_option
+                            target:
+                              entity_id: !input hue_submode_entity
+                            data:
+                              option: hue
+                    default:
+                      - service: input_select.select_option
+                        target:
+                          entity_id: !input hue_submode_entity
+                        data:
+                          option: saturation
+                  - service: timer.start
+                    target:
+                      entity_id: !input exit_timer_entity
+                    data:
+                      duration: "{{ timeout_seconds_value }}"
+            default:
+              - service: light.toggle
+                target:
+                  entity_id: !input light_entity
 
       # ── Double press: toggle hue mode ──────────────────────────────
       # Press while in hue mode → exit; press from any other mode → enter hue mode.
@@ -340,6 +422,11 @@ action:
                       entity_id: !input mode_select_entity
                     data:
                       option: normal
+                  - service: input_select.select_option
+                    target:
+                      entity_id: !input hue_submode_entity
+                    data:
+                      option: saturation
                   - service: timer.cancel
                     target:
                       entity_id: !input exit_timer_entity
@@ -356,6 +443,11 @@ action:
                   entity_id: !input mode_select_entity
                 data:
                   option: hue
+              - service: input_select.select_option
+                target:
+                  entity_id: !input hue_submode_entity
+                data:
+                  option: saturation
               - service: timer.start
                 target:
                   entity_id: !input exit_timer_entity
@@ -473,6 +565,14 @@ action:
                 {% else %}
                   {{ hue_step_slow_val }}
                 {% endif %}
+              saturation_step: >-
+                {% if abs_speed >= fast_threshold_val %}
+                  {{ saturation_step_fast_val }}
+                {% elif abs_speed >= slow_threshold_val %}
+                  {{ saturation_step_medium_val }}
+                {% else %}
+                  {{ saturation_step_slow_val }}
+                {% endif %}
               mired_step: >-
                 {% if abs_speed >= fast_threshold_val %}
                   {{ mired_step_fast_val }}
@@ -500,46 +600,92 @@ action:
                       brightness_pct: "{{ new_pct }}"
                       transition: "{{ transition_time_val / 1000 }}"
 
-              # Hue mode: cycle hue with speed-sensitive steps
+              # Hue mode: saturation (default) or hue angle, by sub-mode helper
               - conditions:
                   - condition: template
                     value_template: "{{ states(mode_select) == 'hue' }}"
                 sequence:
-                  - variables:
-                      _hs: "{{ state_attr(light, 'hs_color') }}"
-                      _cur_h: "{{ (_hs[0] if _hs else 0) | float }}"
-                      _cur_s: "{{ (_hs[1] if _hs else 100) | float }}"
-                      _new_h: "{{ (_cur_h + (direction | int) * (hue_step | int)) % 360 }}"
-                      _s_: "{{ (_cur_s / 100) | float }}"
-                      _c_: "{{ _s_ }}"
-                      _x_: "{{ _c_ * (1 - ((_new_h / 60) % 2 - 1) | abs) }}"
-                      _m_: "{{ 1.0 - _c_ }}"
-                      _i_: "{{ (_new_h | int) // 60 }}"
-                  - service: light.turn_on
-                    target:
-                      entity_id: !input light_entity
-                    data:
-                      hs_color:
-                        - "{{ _new_h }}"
-                        - "{{ _cur_s }}"
-                      transition: "{{ transition_time_val / 1000 }}"
-                  - if:
-                      - condition: template
-                        value_template: "{{ feedback_light != [] }}"
-                    then:
-                      - service: light.turn_on
-                        target:
-                          entity_id: !input feedback_light_entity
-                        data:
-                          rgb_color:
-                            - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
-                            - "{{ (([_x_, _c_, _c_, _x_, 0, 0][_i_ | int] + _m_) * 255) | int }}"
-                            - "{{ (([0, 0, _x_, _c_, _c_, _x_][_i_ | int] + _m_) * 255) | int }}"
-                  - service: timer.start
-                    target:
-                      entity_id: !input exit_timer_entity
-                    data:
-                      duration: "{{ timeout_seconds_value }}"
+                  - choose:
+                      # Saturation sub-mode: keep hue, change S (0–100)
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(hue_submode) == 'saturation' }}"
+                        sequence:
+                          - variables:
+                              _hs: "{{ state_attr(light, 'hs_color') }}"
+                              _cur_h: "{{ (_hs[0] if _hs else 0) | float }}"
+                              _cur_s: "{{ (_hs[1] if _hs else 0) | float }}"
+                              _new_s: "{{ [0, [(_cur_s | float) + (direction | int) * (saturation_step | int), 100] | min] | max }}"
+                              _s_: "{{ (_new_s / 100) | float }}"
+                              _c_: "{{ _s_ }}"
+                              _x_: "{{ _c_ * (1 - ((_cur_h / 60) % 2 - 1) | abs) }}"
+                              _m_: "{{ 1.0 - _c_ }}"
+                              _i_: "{{ (_cur_h | int) // 60 }}"
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input light_entity
+                            data:
+                              hs_color:
+                                - "{{ _cur_h }}"
+                                - "{{ _new_s }}"
+                              transition: "{{ transition_time_val / 1000 }}"
+                          - if:
+                              - condition: template
+                                value_template: "{{ feedback_light != [] }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: !input feedback_light_entity
+                                data:
+                                  rgb_color:
+                                    - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
+                                    - "{{ (([_x_, _c_, _c_, _x_, 0, 0][_i_ | int] + _m_) * 255) | int }}"
+                                    - "{{ (([0, 0, _x_, _c_, _c_, _x_][_i_ | int] + _m_) * 255) | int }}"
+                          - service: timer.start
+                            target:
+                              entity_id: !input exit_timer_entity
+                            data:
+                              duration: "{{ timeout_seconds_value }}"
+                      # Hue-angle sub-mode: keep saturation, change H
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(hue_submode) == 'hue' }}"
+                        sequence:
+                          - variables:
+                              _hs: "{{ state_attr(light, 'hs_color') }}"
+                              _cur_h: "{{ (_hs[0] if _hs else 0) | float }}"
+                              _cur_s: "{{ (_hs[1] if _hs else 100) | float }}"
+                              _new_h: "{{ (_cur_h + (direction | int) * (hue_step | int)) % 360 }}"
+                              _s_: "{{ (_cur_s / 100) | float }}"
+                              _c_: "{{ _s_ }}"
+                              _x_: "{{ _c_ * (1 - ((_new_h / 60) % 2 - 1) | abs) }}"
+                              _m_: "{{ 1.0 - _c_ }}"
+                              _i_: "{{ (_new_h | int) // 60 }}"
+                          - service: light.turn_on
+                            target:
+                              entity_id: !input light_entity
+                            data:
+                              hs_color:
+                                - "{{ _new_h }}"
+                                - "{{ _cur_s }}"
+                              transition: "{{ transition_time_val / 1000 }}"
+                          - if:
+                              - condition: template
+                                value_template: "{{ feedback_light != [] }}"
+                            then:
+                              - service: light.turn_on
+                                target:
+                                  entity_id: !input feedback_light_entity
+                                data:
+                                  rgb_color:
+                                    - "{{ (([_c_, _x_, 0, 0, _x_, _c_][_i_ | int] + _m_) * 255) | int }}"
+                                    - "{{ (([_x_, _c_, _c_, _x_, 0, 0][_i_ | int] + _m_) * 255) | int }}"
+                                    - "{{ (([0, 0, _x_, _c_, _c_, _x_][_i_ | int] + _m_) * 255) | int }}"
+                          - service: timer.start
+                            target:
+                              entity_id: !input exit_timer_entity
+                            data:
+                              duration: "{{ timeout_seconds_value }}"
 
               # Color temperature mode: adjust CT with speed-sensitive steps
               - conditions:
