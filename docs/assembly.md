@@ -33,5 +33,5 @@
 
 7. **Home Assistant**  
    - Add the ESPHome device to Home Assistant.  
-   - Create an input_select (options: `normal`, `hue`, `color_temp`) and a timer (e.g. 30 s).  
-   - Import the blueprint from `homeassistant/blueprints/automation/rotary_dimmer_light.yaml` and create an automation: select the light, encoder direction and button action sensors, mode helper, and exit timer.
+   - Create helpers per [homeassistant/blueprints/automation/README.md](../homeassistant/blueprints/automation/README.md): for `rotary_dimmer_rgb.yaml`, an input_select (`normal`, `hue`, `color_temp`), a hue sub-mode input_select (`saturation`, `hue`), and a timer (e.g. 30 s).  
+   - Import `rotary_dimmer_rgb.yaml` (or `rotary_dimmer_rgb_with_fan.yaml` if you control a fan) and create an automation: light, **Encoder Speed** sensor, button binary sensors, helpers, and optional knob LED.

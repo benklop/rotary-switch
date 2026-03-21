@@ -1,4 +1,4 @@
-# Helper package for the speed-sensitive Light + Fan blueprint:
+# Helper package for the speed-sensitive RGB Light + Fan blueprint:
 # homeassistant/blueprints/automation/rotary_dimmer_rgb_with_fan.yaml
 #
 # This package only defines helpers. Create the automation itself from the blueprint UI.
@@ -9,9 +9,17 @@ rotary_dimmer_rgb_with_fan:
       name: Rotary Switch Mode
       options:
         - normal
+        - hue
         - fan
         - color_temp
       initial: normal
+
+    rotary_switch_hue_submode:
+      name: Rotary Switch Hue Sub-mode
+      options:
+        - saturation
+        - hue
+      initial: saturation
 
   timer:
     rotary_switch_mode_exit:
