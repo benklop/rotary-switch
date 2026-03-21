@@ -47,14 +47,14 @@ script:
       - if:
           condition:
             binary_sensor.is_on: encoder_button
-        then:
-          - binary_sensor.template.publish:
-              id: encoder_button_long
-              state: true
-          - delay: 200ms
-          - binary_sensor.template.publish:
-              id: encoder_button_long
-              state: false
+          then:
+            - binary_sensor.template.publish:
+                id: encoder_button_long
+                state: true
+            - delay: 200ms
+            - binary_sensor.template.publish:
+                id: encoder_button_long
+                state: false
 
 # ── Global: tracks millis() of the last encoder detent ──────────────────────
 # Used to compute inter-detent interval → speed in detents/s.
